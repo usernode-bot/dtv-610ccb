@@ -20,6 +20,9 @@ module.exports = {
   content: [
     './public/**/*.html',
     './public/**/*.js',
+    './app/**/*.ts',
+    './components/**/*.{ts,tsx}',
+    './hooks/**/*.ts',
   ],
 
   // Classes this app builds dynamically (if it ever does) go here, since the

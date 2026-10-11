@@ -17,8 +17,8 @@
       "visual": true,
       "impact": [
         "public/**",
-        "routes/**",
-        "db/**"
+        "app/**",
+        "lib/**"
       ]
     },
     {
@@ -29,9 +29,15 @@
       "visual": true,
       "impact": [
         "public/**",
-        "routes/**",
-        "db/**"
+        "app/**",
+        "lib/**"
       ]
     }
+  ],
+  "private_tables": [
+    "profiles",
+    "watch_history",
+    "coin_transactions",
+    "unlocked_episodes"
   ]
 }
