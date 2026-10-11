@@ -1,11 +1,37 @@
 {
   "description": "Watch movies and dramas together with the group",
   "icon": {
-    "emoji": "🎬"
+    "emoji": "\ud83c\udfac"
   },
   "secrets": [],
   "visibility": {
     "build": "public",
     "view": "public"
-  }
+  },
+  "tests": [
+    {
+      "id": "series.browse",
+      "name": "Series browse grid renders",
+      "path": "/",
+      "expectSelector": "[data-testid=series-grid]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "routes/**",
+        "db/**"
+      ]
+    },
+    {
+      "id": "series.detail",
+      "name": "Series detail lists episodes",
+      "path": "/#/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=episode-list] [data-state=locked]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "routes/**",
+        "db/**"
+      ]
+    }
+  ]
 }

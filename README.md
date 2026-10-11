@@ -1,27 +1,30 @@
 # Dtv
 
-> **Starter template** — this repo was scaffolded by Homeroom Social
-> Vibecoding. Everything in it is placeholder example code until the
-> app's first real feature is built.
+Watch movies and dramas together with the group. Phase 1 is the catalogue:
+a series browse screen and a series detail screen. There is no player,
+payment or ad support yet.
 
-The scaffold is a small working demo that proves the plumbing works:
+## What is here
 
-- **Sign-in** — the server verifies the platform-issued user token
-  (an RS256 JWT) on every request, so the app already knows who is
-  using it. No accounts to build.
-- **Database** — the app has its own private Postgres database, ready
-  to store things.
-- **Styling** — Tailwind CSS, precompiled by `npm run build` during
-  image creation with either Kubernetes/Paketo or standalone Docker, in a
-  light and a dark look that follow the viewer's Homeroom theme.
+- `server.js`: Express server, platform auth, boot (migrate, seed, listen), graceful shutdown.
+- `db/schema.js`: idempotent migrations for `series`, `episodes`, `series_follows`,
+  `coin_balances`, `coin_transactions` and `episode_unlocks`. The three coin and
+  unlock tables are marked `staging:private`.
+- `db/seed.js`: six wholesome demo series with episodes (first few free, the rest priced in coins).
+- `db/series.js`: queries (list, detail with free / unlocked / locked episodes, follow).
+- `routes/series.js`: `GET /api/series`, `GET /api/series/:slug`, `PUT|DELETE /api/series/:slug/follow`.
+- `public/js/app.js`: the two screens (`#/` browse, `#/series/<slug>` detail).
 
-## Replacing the template
+Guests can browse; following needs an account.
 
-To change this app, ask Homeroom bot: open the app on Homeroom, tap the
-Homeroom icon in the header, then **Suggest an improvement**, and describe
-the app you want in plain English. The template will be replaced with your
-real app. You can also run
-Claude Code against this repo directly; start with `CLAUDE.md`, which
-carries the app-specific notes and points at the platform rules.
+## Run and test
 
-Once the real app exists, rewrite this README to describe it.
+```sh
+npm ci --include=dev
+npm run build                      # compiles public/tailwind.css
+USERNODE_ENV=staging DATABASE_URL=postgres://... node server.js
+DATABASE_URL=postgres://... npm test   # schema, seed and queries against a real Postgres
+```
+
+`USERNODE_ENV=staging` seeds the demo catalogue on boot; production never seeds.
+The app needs a platform-issued token for its API, so open it inside Homeroom.
