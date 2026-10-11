@@ -152,14 +152,21 @@ export async function saveProgress(
 ): Promise<boolean> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (user_id, episode_id) DO UPDATE
        SET position_seconds = EXCLUDED.position_seconds,
            completed = EXCLUDED.completed,
-           updated_at = NOW()`,
+           updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`,
     [userId, episodeId, positionSeconds, completed]);
+  // The first time a person starts an episode counts as one view of its series.
+  if (rows[0].inserted) {
+    await pool.query(
+      `UPDATE series SET view_count = view_count + 1
+        WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
+  }
   return true;
 }
 

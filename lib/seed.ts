@@ -29,6 +29,8 @@ interface DemoSeries {
   price: number;
   /** Titles of the first episodes; the rest are "Episode N". */
   titles: string[];
+  /** Made-up view count, so the detail screen has a number to show. */
+  views: number;
 }
 
 export const DEMO_SERIES: DemoSeries[] = [
@@ -39,6 +41,7 @@ export const DEMO_SERIES: DemoSeries[] = [
     synopsis: 'A small neighbourhood bakery gets a new apprentice and a very old sourdough starter. Each morning brings a new recipe, a new regular and a small lesson about patience.',
     coverTone: 0, freeCount: 3, price: 10,
     titles: ['The Starter', 'Early Shift', 'Honey and Rye', 'The Rainy Day Rush', 'Cinnamon Mix-up', 'A Table for Six', 'The Town Fair Order', 'Closing Time'],
+    views: 12840,
   },
   {
     slug: 'garden-club-mysteries',
@@ -47,6 +50,7 @@ export const DEMO_SERIES: DemoSeries[] = [
     synopsis: 'The members of a village garden club solve gentle puzzles: a missing watering can, a mislabelled seed packet, a prize pumpkin that turns up in the wrong place.',
     coverTone: 1, freeCount: 2, price: 8,
     titles: ['The Missing Watering Can', 'Seeds of Doubt', 'The Wandering Pumpkin', 'A Note in the Greenhouse', 'The Flower Show Puzzle', 'Who Moved the Scarecrow?'],
+    views: 5320,
   },
   {
     slug: 'lighthouse-neighbors',
@@ -55,6 +59,7 @@ export const DEMO_SERIES: DemoSeries[] = [
     synopsis: 'Three households share a quiet harbour town and one old lighthouse. Between boat days and market days, they learn to lean on each other.',
     coverTone: 2, freeCount: 3, price: 12,
     titles: ['Fog Morning', 'The Harbour Market', 'Lamp Oil and Letters', 'A Kite Over the Pier', 'The Long Way Home', 'Lantern Night', 'First Light', 'The Ferry Schedule', 'Tea at Low Tide', 'Season Finale'],
+    views: 21900,
   },
   {
     slug: 'little-robot-cooks',
@@ -63,6 +68,7 @@ export const DEMO_SERIES: DemoSeries[] = [
     synopsis: 'A curious robot moves into a tiny kitchen and tries to make dinner for its new friends. Every recipe goes a little differently than the cookbook says.',
     coverTone: 3, freeCount: 4, price: 6,
     titles: ['Boiling Water', 'The Great Pancake Flip', 'Soup of the Day', 'Salt or Sugar?', 'Picnic Basket', 'The Birthday Cake'],
+    views: 870,
   },
   {
     slug: 'road-trip-radio',
@@ -71,6 +77,7 @@ export const DEMO_SERIES: DemoSeries[] = [
     synopsis: 'Four friends, one van and a radio that only plays the song the moment needs. A summer drive across small towns, one detour at a time.',
     coverTone: 4, freeCount: 2, price: 10,
     titles: ['Packing the Van', 'Wrong Exit', 'The World\'s Largest Teapot', 'Campsite Karaoke', 'Flat Tyre Picnic', 'Postcards'],
+    views: 3410,
   },
 ];
 
@@ -105,6 +112,9 @@ export async function seedDemoCatalogue(pool: Pool): Promise<void> {
       `UPDATE series SET genre_id = COALESCE(genre_id, $2) WHERE slug = $1 RETURNING id`,
       [d.slug, genre.rows[0].id]);
     const seriesId = rows[0].id;
+    await pool.query(
+      'UPDATE series SET view_count = $2 WHERE id = $1 AND is_demo AND view_count = 0',
+      [seriesId, d.views]);
     for (let e = 0; e < EPISODES_PER_SERIES; e++) {
       await pool.query(
         `INSERT INTO episodes (series_id, number, title, duration_seconds, coin_price, video_url)

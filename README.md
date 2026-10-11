@@ -1,8 +1,12 @@
 # Dtv
 
 Watch movies and dramas together with the group. Express + TypeScript server
-with Postgres. Phase 1 is the catalogue: a series browse screen and a series
-detail screen (plain JS in `public/`). There is no player, payment or ad support yet.
+with Postgres. The catalogue: a series browse screen (`/`) and a series detail
+page (`/series/<slug>`: cover, genre, expandable description, episode and view
+counts, Watch now / Continue, follow, share, a 5-per-row episode grid and related
+series), plain JS in `public/`. Episodes link to `/watch/<episodeId>`, a
+placeholder until the player lands; locked episodes call `window.dtv.openUnlockSheet`
+(a stub until the unlock sheet lands). There is no player, payment or ad support yet.
 
 ## Layout
 
@@ -21,7 +25,7 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 |---|---|---|
 | `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
-| `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `created_at` |
+| `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
 | `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `created_at`; unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
@@ -33,7 +37,8 @@ Existing follows are copied into `follows` and the ledger column `kind` becomes 
 
 ## API
 
-Public (guests may read): `GET /api/genres`, `GET /api/series[?genre=<slug>]`, `GET /api/series/:slug`,
+Public (guests may read): `GET /api/genres`, `GET /api/series[?genre=<slug>]`, `GET /api/series/:slug`
+(with `viewCount`, the viewer's own progress per episode and `continueEpisode`), `GET /api/series/:slug/related`,
 `GET /api/series/:slug/episodes`, `GET /api/episodes/:id`. A locked episode's `videoUrl` is `null`.
 
 Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/series/:slug/follow`,

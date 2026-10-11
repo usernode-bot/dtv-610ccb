@@ -34,6 +34,19 @@
       ]
     },
     {
+      "id": "series.detail-page",
+      "name": "Series detail page shows Watch now and related series",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=related-series] [data-testid=series-tile]",
+      "expectText": "Watch now",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
       "id": "onboarding.genres",
       "name": "Genre onboarding offers genres to pick",
       "path": "/#/onboarding",
