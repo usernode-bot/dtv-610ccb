@@ -63,6 +63,29 @@
       "name": "Series detail offers follow and unlock",
       "path": "/#/series/bakery-on-maple-street",
       "expectSelector": "[data-testid=episode-list] [data-testid=unlock-button]"
+    },
+    {
+      "id": "mylist.following",
+      "name": "My List opens on the Following tab",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=my-list-tab-following][aria-current=page]",
+      "expectText": "My List",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "My List watch history tab",
+      "path": "/my-list/history",
+      "expectSelector": "[data-testid=my-list-tab-history][aria-current=page]"
+    },
+    {
+      "name": "Browse links to My List",
+      "path": "/",
+      "expectSelector": "[data-testid=my-list-link]"
     }
   ],
   "private_tables": [
