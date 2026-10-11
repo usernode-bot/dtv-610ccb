@@ -25,6 +25,11 @@ const STATEMENTS: string[] = [
      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
    )`,
 
+  // Genres the person picked during onboarding (genre slugs), and when they
+  // finished it. NULL onboarded_at means the onboarding screen is still due.
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS favorite_genres TEXT[] NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ`,
+
   `CREATE TABLE IF NOT EXISTS genres (
      id         SERIAL PRIMARY KEY,
      slug       TEXT NOT NULL UNIQUE,
@@ -49,6 +54,9 @@ const STATEMENTS: string[] = [
   `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE`,
   // Position in the home screen's hero carousel (1 first); NULL is not featured.
   `ALTER TABLE series ADD COLUMN IF NOT EXISTS featured_rank SMALLINT`,
+  // How many times someone started an episode of this series for the first
+  // time (one per person per episode; see saveProgress).
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS view_count INTEGER NOT NULL DEFAULT 0 CHECK (view_count >= 0)`,
 
   // One episode of a series. coin_price 0 means free; above 0 it is locked
   // until the viewer has an unlocked_episodes row for it.

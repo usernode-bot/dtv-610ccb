@@ -6,6 +6,20 @@ import type {
   CoinTransaction, EpisodeItem, Profile, SeriesSummary, WatchHistoryItem,
 } from '../types';
 
+const PROFILE_COLUMNS = 'id, username, avatar_url, coin_balance, favorite_genres, onboarded_at, created_at';
+
+function toProfile(r: any): Profile {
+  return {
+    id: Number(r.id),
+    username: r.username,
+    avatarUrl: r.avatar_url,
+    coinBalance: r.coin_balance,
+    favoriteGenres: r.favorite_genres,
+    onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
 /** The person's profile, created on first sight and kept in step with their handle. */
 export async function ensureProfile(
   pool: Pool, userId: number, username: string,
@@ -13,16 +27,79 @@ export async function ensureProfile(
   const { rows } = await pool.query(
     `INSERT INTO profiles (id, username) VALUES ($1, $2)
      ON CONFLICT (id) DO UPDATE SET username = EXCLUDED.username
-     RETURNING id, username, avatar_url, coin_balance, created_at`,
+     RETURNING ${PROFILE_COLUMNS}`,
     [userId, username]);
-  const r = rows[0];
-  return {
-    id: Number(r.id),
-    username: r.username,
-    avatarUrl: r.avatar_url,
-    coinBalance: r.coin_balance,
-    createdAt: r.created_at.toISOString(),
-  };
+  return toProfile(rows[0]);
+}
+
+/**
+ * How many genres onboarding asks for: 3, or every genre when there are fewer.
+ * 0 means there is nothing to pick yet, so onboarding is skipped.
+ */
+export async function minFavoriteGenres(pool: Pool): Promise<number> {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM genres');
+  return Math.min(3, rows[0].n);
+}
+
+/**
+ * Save the genres picked during onboarding and mark it done. Returns the
+ * profile, or an error code: 'invalid_genres' for a slug that is not a genre
+ * or a repeat, 'too_few_genres' for fewer than minFavoriteGenres.
+ */
+export async function saveFavoriteGenres(
+  pool: Pool, userId: number, username: string, slugs: unknown,
+): Promise<Profile | 'invalid_genres' | 'too_few_genres'> {
+  if (!Array.isArray(slugs) || !slugs.every((g) => typeof g === 'string')) return 'invalid_genres';
+  const unique = [...new Set(slugs as string[])];
+  if (unique.length !== slugs.length || unique.length > 50) return 'invalid_genres';
+  const known = await pool.query('SELECT slug FROM genres WHERE slug = ANY($1::text[])', [unique]);
+  if (known.rows.length !== unique.length) return 'invalid_genres';
+  if (unique.length < await minFavoriteGenres(pool)) return 'too_few_genres';
+  await ensureProfile(pool, userId, username);
+  const { rows } = await pool.query(
+    `UPDATE profiles SET favorite_genres = $2::text[], onboarded_at = COALESCE(onboarded_at, NOW())
+      WHERE id = $1 RETURNING ${PROFILE_COLUMNS}`, [userId, unique]);
+  return toProfile(rows[0]);
+}
+
+/**
+ * Spend coins to unlock a paid episode: one ledger row and one unlock, in a
+ * single transaction. Unlocking a free or already unlocked episode costs
+ * nothing. The profile must exist (ensureProfile first).
+ */
+export async function unlockEpisode(
+  pool: Pool, userId: number, episodeId: number,
+): Promise<{ coinBalance: number } | 'not_found' | 'not_enough_coins'> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ep = await client.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
+    if (!ep.rows.length) { await client.query('ROLLBACK'); return 'not_found'; }
+    const price: number = ep.rows[0].coin_price;
+    const me = await client.query(
+      'SELECT coin_balance FROM profiles WHERE id = $1 FOR UPDATE', [userId]);
+    const balance: number = me.rows[0].coin_balance;
+    const have = await client.query(
+      'SELECT 1 FROM unlocked_episodes WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
+    if (price === 0 || have.rows.length) { await client.query('COMMIT'); return { coinBalance: balance }; }
+    if (balance < price) { await client.query('ROLLBACK'); return 'not_enough_coins'; }
+    const tx = await client.query(
+      `INSERT INTO coin_transactions (user_id, amount, type, episode_id)
+       VALUES ($1, $2, 'unlock', $3) RETURNING id`, [userId, -price, episodeId]);
+    await client.query(
+      `INSERT INTO unlocked_episodes (user_id, episode_id, coin_transaction_id) VALUES ($1, $2, $3)`,
+      [userId, episodeId, tx.rows[0].id]);
+    const upd = await client.query(
+      'UPDATE profiles SET coin_balance = coin_balance - $2 WHERE id = $1 RETURNING coin_balance',
+      [userId, price]);
+    await client.query('COMMIT');
+    return { coinBalance: upd.rows[0].coin_balance };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** Series this person follows, most recently followed first. */
@@ -75,14 +152,21 @@ export async function saveProgress(
 ): Promise<boolean> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (user_id, episode_id) DO UPDATE
        SET position_seconds = EXCLUDED.position_seconds,
            completed = EXCLUDED.completed,
-           updated_at = NOW()`,
+           updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`,
     [userId, episodeId, positionSeconds, completed]);
+  // The first time a person starts an episode counts as one view of its series.
+  if (rows[0].inserted) {
+    await pool.query(
+      `UPDATE series SET view_count = view_count + 1
+        WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
+  }
   return true;
 }
 

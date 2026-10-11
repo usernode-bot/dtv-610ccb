@@ -99,7 +99,11 @@ tables you've marked private), etc.
 
 Watch movies and dramas together with the group
 
-Phase 1 ships the catalogue (series detail, follow); Phase 3 adds the four tabs
+Phase 1 ships the catalogue (browse series, series detail, follow). Phase 2 adds Homeroom sign-in: a `profiles` row per person on their first
+authenticated request, a genre onboarding (pick 3 or more, saved to
+`profiles.favorite_genres`) shown until done, and coin unlocks. Guests browse
+and see free episodes; follow, unlock and saving genres answer 401
+`account_required` with an `action`. Phase 3 adds the four tabs
 (Home, Discover, My list, Profile) with a top bar and a bottom tab bar. Episodes are
 free (`coin_price` 0) or locked behind coins; the player, payments and ads come
 later. Content must stay wholesome and neutral (rated None).
@@ -112,6 +116,9 @@ change follows it, and updates it when a request changes the look on purpose.
 - **Palette:** accent: teal; neutrals: warm greys (the kit defaults in `styles/tailwind-input.css`)
 - **Signature element:** series covers are tinted 2:3 tiles with the title's initial until real artwork exists (`cover_url`); the series card puts the episode count and a "Free" / "3 free" tag on the poster
 - **Layout:** sticky top bar (name, search, coins), fixed bottom tab bar, sideways-scrolling rows (`.scroll-row`) of series cards
+- **Onboarding is always dark:** the genre onboarding layer carries the `dark`
+  class itself, so it keeps its cinematic dark look in both themes. Every other
+  screen follows the viewer's theme.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
 

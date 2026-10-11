@@ -6,6 +6,10 @@ featured series, Continue watching, Trending now, New releases and one row per t
 Discover (debounced title search and genre chips), My list (followed series) and Profile
 (coins and recently watched), plus the series detail screen. There is no player, payment or
 ad support yet.
+Series detail page (`/series/<slug>`: cover, genre, expandable description, episode and view
+counts, Watch now / Continue, follow, share, a 5-per-row episode grid and related
+series). Episodes link to `/watch/<episodeId>`, a placeholder until the player lands;
+locked episodes call `window.dtv.openUnlockSheet` (a stub until the unlock sheet lands).
 
 ## Layout
 
@@ -24,7 +28,7 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 |---|---|---|
 | `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
-| `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `featured_rank` (hero order, NULL = not featured), `created_at` |
+| `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `featured_rank` (hero order, NULL = not featured), `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
 | `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `created_at`; unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
@@ -38,7 +42,8 @@ Existing follows are copied into `follows` and the ledger column `kind` becomes 
 
 Public (guests may read): `GET /api/viewer` (signed in or not, and coins), `GET /api/home` (everything
 Home shows; `continueWatching` is null for a guest), `GET /api/genres`,
-`GET /api/series[?genre=<slug>][&q=<title text>]`, `GET /api/series/:slug`,
+`GET /api/series[?genre=<slug>][&q=<title text>]`, `GET /api/series/:slug`
+(with `viewCount`, the viewer's own progress per episode and `continueEpisode`), `GET /api/series/:slug/related`,
 `GET /api/series/:slug/episodes`, `GET /api/episodes/:id`. A locked episode's `videoUrl` is `null`.
 
 Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/series/:slug/follow`,

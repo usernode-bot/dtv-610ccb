@@ -3,10 +3,13 @@
 // `userId` is the signed-in person's id, or null for a guest.
 
 import type { Pool } from 'pg';
-import type { EpisodeItem, Genre, SeriesDetail, SeriesSummary } from '../types';
+import type {
+  EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary,
+} from '../types';
 
 export const SUMMARY_SQL = `
   SELECT s.id, s.slug, s.title, s.synopsis, s.genre, s.cover_url, s.cover_tone, s.is_demo,
+         s.view_count,
          COUNT(e.id)::int AS episode_count,
          COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count,
          EXISTS (SELECT 1 FROM follows f
@@ -93,7 +96,10 @@ export async function getEpisode(
   return rows.length ? toEpisode(rows[0]) : null;
 }
 
-/** One series with its episodes, or null when the slug is unknown. */
+/**
+ * One series with its episodes, the viewer's progress on each and where
+ * "Continue" goes, or null when the slug is unknown.
+ */
 export async function getSeries(
   pool: Pool, slug: string, userId: number | null,
 ): Promise<SeriesDetail | null> {
@@ -102,8 +108,49 @@ export async function getSeries(
   if (!found.rows.length) return null;
   const r = found.rows[0];
   const eps = await pool.query(
-    `${EPISODE_SQL} WHERE e.series_id = $2 ORDER BY e.number`, [userId, r.id]);
-  return { ...toSummary(r), synopsis: r.synopsis, episodes: eps.rows.map(toEpisode) };
+    `SELECT q.*, w.position_seconds, w.completed, w.updated_at AS watched_at
+       FROM (${EPISODE_SQL} WHERE e.series_id = $2) q
+       LEFT JOIN watch_history w ON w.episode_id = q.id AND w.user_id = $1
+      ORDER BY q.number`, [userId, r.id]);
+  const episodes: EpisodeWithProgress[] = eps.rows.map((e) => ({
+    ...toEpisode(e),
+    positionSeconds: e.position_seconds ?? null,
+    watched: e.completed === true,
+  }));
+
+  let continueEpisode: SeriesDetail['continueEpisode'] = null;
+  let latest: any = null;
+  for (const e of eps.rows) {
+    if (e.watched_at && (!latest || e.watched_at > latest.watched_at)) latest = e;
+  }
+  if (latest && !latest.completed) {
+    continueEpisode = { id: latest.id, number: latest.number, resume: true };
+  } else if (latest) {
+    const next = eps.rows.find((e) => e.number > latest.number);
+    if (next) continueEpisode = { id: next.id, number: next.number, resume: false };
+  }
+
+  return {
+    ...toSummary(r), synopsis: r.synopsis, viewCount: r.view_count, episodes, continueEpisode,
+  };
+}
+
+/**
+ * Other series to suggest beside one: the same genre first, then the rest,
+ * oldest first. Null when the slug is unknown.
+ */
+export async function listRelated(
+  pool: Pool, slug: string, userId: number | null, limit = 6,
+): Promise<SeriesSummary[] | null> {
+  const s = await pool.query('SELECT id, genre_id FROM series WHERE slug = $1', [slug]);
+  if (!s.rows.length) return null;
+  const { rows } = await pool.query(
+    `SELECT q.* FROM (${SUMMARY_SQL}) q
+       JOIN series s ON s.id = q.id
+      WHERE q.id <> $2
+      ORDER BY (s.genre_id IS NOT NULL AND s.genre_id = $3) DESC, q.id
+      LIMIT $4`, [userId, s.rows[0].id, s.rows[0].genre_id, limit]);
+  return rows.map(toSummary);
 }
 
 /** Follow or unfollow. Idempotent both ways. Returns the new state, or null if no such series. */
