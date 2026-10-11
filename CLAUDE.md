@@ -99,7 +99,8 @@ tables you've marked private), etc.
 
 Watch movies and dramas together with the group
 
-Phase 1 ships the catalogue (browse series, series detail, follow). Episodes are
+Phase 1 ships the catalogue (series detail, follow); Phase 3 adds the four tabs
+(Home, Discover, My list, Profile) with a top bar and a bottom tab bar. Episodes are
 free (`coin_price` 0) or locked behind coins; the player, payments and ads come
 later. Content must stay wholesome and neutral (rated None).
 
@@ -109,7 +110,8 @@ This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
 - **Palette:** accent: teal; neutrals: warm greys (the kit defaults in `styles/tailwind-input.css`)
-- **Signature element:** series covers are tinted tiles with the title's initial until real artwork exists (`cover_url`)
+- **Signature element:** series covers are tinted 2:3 tiles with the title's initial until real artwork exists (`cover_url`); the series card puts the episode count and a "Free" / "3 free" tag on the poster
+- **Layout:** sticky top bar (name, search, coins), fixed bottom tab bar, sideways-scrolling rows (`.scroll-row`) of series cards
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
 
@@ -136,6 +138,6 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- Genre rows on Home come from the `genres` table, never a hard-coded list. Genres must stay
+  wholesome (rated None): no romance/dating, revenge or similar mature themes.
+- The app follows the viewer's Homeroom theme (light or dark); it has no fixed dark look.

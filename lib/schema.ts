@@ -47,6 +47,8 @@ const STATEMENTS: string[] = [
   `ALTER TABLE series ADD COLUMN IF NOT EXISTS genre_id INTEGER REFERENCES genres(id) ON DELETE SET NULL`,
   // True for rows the staging seed made, so demo content is never mistaken for real.
   `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE`,
+  // Position in the home screen's hero carousel (1 first); NULL is not featured.
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS featured_rank SMALLINT`,
 
   // One episode of a series. coin_price 0 means free; above 0 it is locked
   // until the viewer has an unlocked_episodes row for it.
