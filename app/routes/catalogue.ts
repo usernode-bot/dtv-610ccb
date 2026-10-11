@@ -1,4 +1,4 @@
-// Public read-only routes (guests may read) plus follow, which needs an account.
+// Public read-only routes (guests may read) plus follow and unlock, which need an account.
 
 import express from 'express';
 import type { Pool } from 'pg';
@@ -6,6 +6,7 @@ import { requireUser, userId, wrap } from '../../lib/auth';
 import {
   getEpisode, getSeries, listEpisodes, listGenres, listRelated, listSeries, setFollow,
 } from '../../lib/catalogue';
+import { ensureProfile, unlockEpisode } from '../../lib/me';
 
 export function catalogueRouter(pool: Pool, opts: { isStaging: boolean }): express.Router {
   const router = express.Router();
@@ -42,6 +43,17 @@ export function catalogueRouter(pool: Pool, opts: { isStaging: boolean }): expre
     const episode = Number.isInteger(id) ? await getEpisode(pool, id, userId(req)) : null;
     if (!episode) return void res.status(404).json({ error: 'not_found' });
     res.json({ episode });
+  }));
+
+  // Spend coins on a paid episode. Guests are refused with account_required.
+  router.post('/episodes/:id/unlock', requireUser, wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return void res.status(404).json({ error: 'not_found' });
+    await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const result = await unlockEpisode(pool, userId(req)!, id);
+    if (result === 'not_found') return void res.status(404).json({ error: 'not_found' });
+    if (result === 'not_enough_coins') return void res.status(402).json({ error: 'not_enough_coins' });
+    res.json({ episode: await getEpisode(pool, id, userId(req)), coinBalance: result.coinBalance });
   }));
 
   router.put('/series/:slug/follow', requireUser, wrap(async (req, res) => {

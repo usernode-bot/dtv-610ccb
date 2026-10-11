@@ -1,4 +1,4 @@
-// Demo catalogue: 5 series x 20 episodes. Wholesome and neutral on purpose (the
+// Demo catalogue: 5 series x 20 episodes, plus a few genres with no series yet. Wholesome and neutral on purpose (the
 // app is rated None). Every series is flagged is_demo, and covers are the
 // tinted placeholder tiles (cover_url stays empty until real artwork exists).
 // Streams are Apple's public HLS test streams.
@@ -81,6 +81,9 @@ export const DEMO_SERIES: DemoSeries[] = [
   },
 ];
 
+/** Genres with no demo series yet, so onboarding has more than five to pick from. */
+export const EXTRA_DEMO_GENRES = ['Adventure', 'Documentary', 'Musical'];
+
 const slugify = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 /** Runtime of a demo episode: a short-drama length that varies a little. */
@@ -89,6 +92,10 @@ function demoDuration(seriesIndex: number, episodeIndex: number): number {
 }
 
 export async function seedDemoCatalogue(pool: Pool): Promise<void> {
+  for (const name of EXTRA_DEMO_GENRES) {
+    await pool.query(
+      'INSERT INTO genres (slug, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', [slugify(name), name]);
+  }
   for (let s = 0; s < DEMO_SERIES.length; s++) {
     const d = DEMO_SERIES[s];
     const genre = await pool.query(

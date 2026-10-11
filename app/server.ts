@@ -8,6 +8,7 @@ import { migrate } from '../lib/schema';
 import { seedDemoCatalogue } from '../lib/seed';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
+import { accountRequired, upsertProfileOnce } from '../lib/auth';
 
 // Compiled to dist/app/server.js, so public/ is two levels up.
 const PUBLIC_DIR = path.resolve(__dirname, '..', '..', 'public');
@@ -147,7 +148,7 @@ app.use((req, res, next) => {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
     if (!req.user && req.guest) {
       if (req.method === 'GET' || req.method === 'HEAD') return next();
-      return res.status(401).json({ error: 'account_required' });
+      return res.status(401).json(accountRequired(req));
     }
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   }
@@ -159,6 +160,9 @@ app.use((req, res, next) => {
 let shuttingDown = false;
 app.get('/health', (_req, res) =>
   shuttingDown ? res.status(503).json({ status: 'shutting_down' }) : res.json({ status: 'ok' }));
+
+// A signed-in person gets a profiles row on their first authenticated request.
+app.use(upsertProfileOnce(pool));
 
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.

@@ -45,6 +45,24 @@
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "id": "onboarding.genres",
+      "name": "Genre onboarding offers genres to pick",
+      "path": "/#/onboarding",
+      "expectSelector": "[data-testid=genre-picker] button[aria-pressed]",
+      "expectText": "What do you like to watch?",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Series detail offers follow and unlock",
+      "path": "/#/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=episode-list] [data-testid=unlock-button]"
     }
   ],
   "private_tables": [
