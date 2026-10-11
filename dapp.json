@@ -32,6 +32,19 @@
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "id": "series.detail-page",
+      "name": "Series detail page shows Watch now and related series",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=related-series] [data-testid=series-tile]",
+      "expectText": "Watch now",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
     }
   ],
   "private_tables": [
