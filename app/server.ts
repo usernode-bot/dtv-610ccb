@@ -5,10 +5,11 @@ import jwt from 'jsonwebtoken';
 import type { Server } from 'http';
 import { createPool } from '../lib/db';
 import { migrate } from '../lib/schema';
-import { seedDemoCatalogue } from '../lib/seed';
+import { seedDemoAccounts, seedDemoCatalogue } from '../lib/seed';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
-import { accountRequired, upsertProfileOnce } from '../lib/auth';
+import { adminRouter } from './routes/admin';
+import { accountRequired, adminPageGuard, attachAccount, upsertProfileOnce } from '../lib/auth';
 
 // Compiled to dist/app/server.js, so public/ is two levels up.
 const PUBLIC_DIR = path.resolve(__dirname, '..', '..', 'public');
@@ -163,10 +164,13 @@ app.get('/health', (_req, res) =>
 
 // A signed-in person gets a profiles row on their first authenticated request.
 app.use(upsertProfileOnce(pool));
+// Then their role and ban state; a banned person's API calls stop here.
+app.use(attachAccount(pool));
 
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.
 app.use('/api/me', meRouter(pool));
+app.use('/api/admin', adminRouter(pool));
 app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 
 // The template ships no favicon file; index.html carries an inline SVG
@@ -177,6 +181,9 @@ app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 app.use(express.static(PUBLIC_DIR));
+
+// The admin screens: only an admin gets the page; anyone else goes home.
+app.get(/^\/admin(?:\/|$)/, adminPageGuard);
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -240,7 +247,10 @@ async function start(): Promise<void> {
   await migrate(pool);
   // Staging starts with empty tables for anything new, so give the preview a
   // demo catalogue. Production is never seeded.
-  if (IS_STAGING) await seedDemoCatalogue(pool);
+  if (IS_STAGING) {
+    await seedDemoCatalogue(pool);
+    await seedDemoAccounts(pool);
+  }
   server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;

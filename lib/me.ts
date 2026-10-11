@@ -6,7 +6,7 @@ import type {
   CoinTransaction, EpisodeItem, Profile, SeriesSummary, WatchHistoryItem,
 } from '../types';
 
-const PROFILE_COLUMNS = 'id, username, avatar_url, coin_balance, favorite_genres, onboarded_at, created_at';
+const PROFILE_COLUMNS = 'id, username, avatar_url, coin_balance, favorite_genres, onboarded_at, role, created_at';
 
 function toProfile(r: any): Profile {
   return {
@@ -16,6 +16,7 @@ function toProfile(r: any): Profile {
     coinBalance: r.coin_balance,
     favoriteGenres: r.favorite_genres,
     onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
+    role: r.role,
     createdAt: r.created_at.toISOString(),
   };
 }

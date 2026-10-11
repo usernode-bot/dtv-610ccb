@@ -23,13 +23,13 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 
 | Table | Visibility | Columns |
 |---|---|---|
-| `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
+| `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `favorite_genres`, `onboarded_at`, `role` (`user` / `admin`), `banned`, `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
 | `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
 | `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `created_at`; unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
-| `coin_transactions` | private | `id`, `user_id`, `amount` (+ earns, - spends), `type` (`purchase` / `unlock` / `reward` / `ad`), `episode_id`, `note`, `created_at` |
+| `coin_transactions` | private | `id`, `user_id`, `amount` (+ earns, - spends), `type` (`purchase` / `unlock` / `reward` / `ad` / `admin`), `episode_id`, `note` (an admin adjustment's reason), `actor_id` (the admin who made it), `created_at` |
 | `unlocked_episodes` | private | `user_id` -> profiles, `episode_id` -> episodes, `coin_transaction_id`, `unlocked_at` |
 
 The Phase 0 tables `series_follows`, `coin_balances` and `episode_unlocks` are left in place but no longer read.
@@ -44,6 +44,21 @@ Public (guests may read): `GET /api/genres`, `GET /api/series[?genre=<slug>]`, `
 Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/series/:slug/follow`,
 `GET /api/me`, `GET /api/me/follows`, `GET|PUT /api/me/watch-history[/:episodeId]`,
 `GET /api/me/unlocked`, `GET /api/me/coin-transactions`.
+
+## Admin
+
+The `ADMIN_USERNAMES` setting (in `dapp.json`, set in the platform's Secrets panel; comma separated,
+case-insensitive) gives those people the `admin` role when they sign in. Admins can make others admin from
+the Users page; someone listed in the setting cannot be demoted there. Every request re-reads the person's
+role and ban state (`attachAccount` in `lib/auth.ts`): a banned person's API calls get 403 `banned`, `/admin`
+pages send non-admins to `/`, and `/api/admin/*` answers 403 `admin_only` to anyone but an admin.
+
+Screens: `/admin` (total users, daily active users, revenue as coins bought, coins spent on unlocks, top
+series), `/admin/users` (search) and `/admin/users/<id>` (adjust coins with a reason, ban / unban, make or
+remove admin, recent coin activity). API: `GET /api/admin/stats`, `GET /api/admin/users[?q=]`,
+`GET /api/admin/users/:id`, `POST /api/admin/users/:id/coins` `{ amount, reason }`,
+`PUT /api/admin/users/:id/ban` `{ banned }`, `PUT /api/admin/users/:id/role` `{ role }`.
+Staging also seeds four fake accounts (`staging-demo-viewer-1` to `-4`) with a few purchases and unlocks.
 
 ## Demo data and the seed
 
