@@ -4,7 +4,7 @@ import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
 import {
-  getEpisode, getSeries, listEpisodes, listGenres, listSeries, setFollow,
+  getEpisode, getSeries, getWatchPayload, listEpisodes, listGenres, listSeries, setFollow,
 } from '../../lib/catalogue';
 import { ensureProfile, unlockEpisode } from '../../lib/me';
 
@@ -37,6 +37,15 @@ export function catalogueRouter(pool: Pool, opts: { isStaging: boolean }): expre
     const episode = Number.isInteger(id) ? await getEpisode(pool, id, userId(req)) : null;
     if (!episode) return void res.status(404).json({ error: 'not_found' });
     res.json({ episode });
+  }));
+
+  // The player: one episode, its series, the series as the swipe feed, and the
+  // viewer's saved position. Guests may read it (resume is null for them).
+  router.get('/watch/:episodeId', wrap(async (req, res) => {
+    const id = Number(req.params.episodeId);
+    const payload = Number.isInteger(id) ? await getWatchPayload(pool, id, userId(req)) : null;
+    if (!payload) return void res.status(404).json({ error: 'not_found' });
+    res.json({ demo: opts.isStaging, ...payload });
   }));
 
   // Spend coins on a paid episode. Guests are refused with account_required.

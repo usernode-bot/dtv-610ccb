@@ -32,11 +32,23 @@ export interface EpisodeItem {
   state: EpisodeState;
   /** HLS stream. Only filled in for a free episode or one the viewer unlocked. */
   videoUrl: string | null;
+  /** WebVTT subtitles, when the episode has them. Hidden like videoUrl while locked. */
+  subtitlesUrl: string | null;
 }
 
 export interface SeriesDetail extends SeriesSummary {
   synopsis: string;
   episodes: EpisodeItem[];
+}
+
+/** Everything the player needs to open one episode: its series and the whole series as the swipe feed. */
+export interface WatchPayload {
+  episode: EpisodeItem;
+  series: Pick<SeriesSummary, 'slug' | 'title' | 'genre' | 'coverUrl' | 'coverTone' | 'following'>;
+  /** Every episode of the series, in order. */
+  playlist: EpisodeItem[];
+  /** Where the viewer got to in this episode; null for a guest or a first watch. */
+  resume: { positionSeconds: number; completed: boolean } | null;
 }
 
 export interface Profile {

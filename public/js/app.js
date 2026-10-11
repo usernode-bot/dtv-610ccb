@@ -1,6 +1,7 @@
-// Dtv front end: a series browse screen, a series detail screen and the genre
-// onboarding. Hash routes: "#/" (browse), "#/series/<slug>" (detail) and
-// "#/onboarding". Onboarding is a full-screen layer over the page, shown on
+// Dtv front end: a series browse screen, a series detail screen, the genre
+// onboarding and the player (public/js/player.js). Hash routes: "#/" (browse),
+// "#/series/<slug>" (detail), "#/watch/<episodeId>" or
+// "#/watch/<slug>/<number>" (player) and "#/onboarding". Onboarding is a full-screen layer over the page, shown on
 // its own route and, for a signed-in person who has not picked genres yet,
 // on every route until they do. Everything is
 // built with DOM calls and textContent, so catalogue text is never parsed as
@@ -34,8 +35,11 @@
     } catch (_) {}
   }
 
-  /** @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status */
-  function api(path, method, body) {
+  /**
+   * @param {{keepalive?: boolean}} [extra] fetch options (keepalive lets a save finish as the page closes)
+   * @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status
+   */
+  function api(path, method, body, extra) {
     var headers = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers['x-usernode-token'] = token;
@@ -44,6 +48,7 @@
     }
     var init = { method: method || 'GET', headers: headers };
     if (body !== undefined) init.body = JSON.stringify(body);
+    if (extra && extra.keepalive) init.keepalive = true;
     return fetch(path, init).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
@@ -189,6 +194,21 @@
   }
 
   // ── Detail ────────────────────────────────────────────────────────────
+  function playMark() {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'h-3 w-3');
+    svg.setAttribute('fill', 'currentColor');
+    var tri = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tri.setAttribute('d', 'M7 4l13 8-13 8z');
+    svg.appendChild(tri);
+    var mark = h('span', 'flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent', [svg]);
+    mark.setAttribute('aria-hidden', 'true');
+    return mark;
+  }
+
+  // The number and title open the player; a locked row keeps its unlock
+  // button beside the link rather than inside it.
   function episodeRow(/** @type {EpisodeItem} */ e, onUnlock) {
     var status;
     if (e.state === 'locked') {
@@ -199,14 +219,18 @@
     } else {
       status = h('span', 'text-small font-medium ' + (e.state === 'free' ? 'text-accent' : 'text-muted'), e.state === 'free' ? 'Free' : 'Unlocked');
     }
-    var row = h('li', 'list-row', [
+    var link = h('a', 'flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
       h('span', 'w-6 shrink-0 text-small text-muted', String(e.number)),
       h('div', 'min-w-0 flex-1', [
         h('p', 'truncate text-body', e.title),
         h('p', 'text-small text-muted', minutes(e.durationSeconds)),
       ]),
-      status,
+      e.state === 'locked' ? null : status,
+      e.state === 'locked' ? null : playMark(),
     ]);
+    link.href = '#/watch/' + e.id;
+    link.dataset.testid = 'episode-link';
+    var row = h('li', 'list-row', [link, e.state === 'locked' ? status : null]);
     row.dataset.state = e.state;
     return row;
   }
@@ -401,6 +425,7 @@
           me.onboarding.required = false;
           closeOnboarding();
           if (location.hash === '#/onboarding') location.hash = '#/';
+          else if (/^#\/watch\//.test(location.hash)) route();
         }).catch(function (err) {
           if (err.status !== 401) message.textContent = 'Could not save your genres. Try again.';
           paintSave();
@@ -433,7 +458,30 @@
   }
 
   // ── Routing ───────────────────────────────────────────────────────────
+  // What the player borrows from this file, so nothing is written twice.
+  var playerContext = {
+    api: api, h: h, cover: cover, lockIcon: lockIcon, minutes: minutes, plural: plural,
+    isGuest: isGuest, askForAccount: askForAccount,
+    canSave: function () { return !!me && me !== 'guest'; },
+  };
+
+  /** The player's route as { id } or { slug, number }, or null for any other route. */
+  function watchRef() {
+    var m = /^#\/watch\/(\d+)$/.exec(location.hash);
+    if (m) return { id: Number(m[1]) };
+    m = /^#\/watch\/([^/]+)\/(\d+)$/.exec(location.hash);
+    return m ? { slug: decodeURIComponent(m[1]), number: Number(m[2]) } : null;
+  }
+
   function route() {
+    var ref = watchRef();
+    if (ref) {
+      // The player covers the page; onboarding, when due, comes first.
+      if (onboardingDue()) openOnboarding();
+      else window.DtvPlayer.open(ref, playerContext);
+      return;
+    }
+    window.DtvPlayer.close();
     var m = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (m) renderDetail(decodeURIComponent(m[1]));
     else renderBrowse();

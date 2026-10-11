@@ -1,7 +1,8 @@
 // Demo catalogue: 5 series x 20 episodes, plus a few genres with no series yet. Wholesome and neutral on purpose (the
 // app is rated None). Every series is flagged is_demo, and covers are the
 // tinted placeholder tiles (cover_url stays empty until real artwork exists).
-// Streams are Apple's public HLS test streams.
+// Streams are Apple's public HLS test streams; subtitles are one obviously
+// fake WebVTT file served from public/demo.
 //
 // Idempotent: genres are keyed by slug, series by slug, episodes by
 // (series, number); re-running changes nothing. Never touches profiles,
@@ -10,6 +11,8 @@
 import type { Pool } from 'pg';
 
 export const EPISODES_PER_SERIES = 20;
+
+export const DEMO_SUBTITLES = '/demo/staging-subtitles.vtt';
 
 export const DEMO_STREAMS = [
   'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8',
@@ -107,12 +110,13 @@ export async function seedDemoCatalogue(pool: Pool): Promise<void> {
     const seriesId = rows[0].id;
     for (let e = 0; e < EPISODES_PER_SERIES; e++) {
       await pool.query(
-        `INSERT INTO episodes (series_id, number, title, duration_seconds, coin_price, video_url)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO episodes (series_id, number, title, duration_seconds, coin_price, video_url, subtitles_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (series_id, number) DO UPDATE
-           SET video_url = COALESCE(episodes.video_url, EXCLUDED.video_url)`,
+           SET video_url = COALESCE(episodes.video_url, EXCLUDED.video_url),
+               subtitles_url = COALESCE(episodes.subtitles_url, EXCLUDED.subtitles_url)`,
         [seriesId, e + 1, d.titles[e] ?? `Episode ${e + 1}`, demoDuration(s, e),
-         e < d.freeCount ? 0 : d.price, DEMO_STREAMS[(s + e) % DEMO_STREAMS.length]]);
+         e < d.freeCount ? 0 : d.price, DEMO_STREAMS[(s + e) % DEMO_STREAMS.length], DEMO_SUBTITLES]);
     }
   }
 }
