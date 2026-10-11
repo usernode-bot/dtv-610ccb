@@ -1,14 +1,20 @@
-const express = require('express');
-const path = require('path');
-const { Pool } = require('pg');
-const jwt = require('jsonwebtoken');
-const { migrate } = require('./db/schema');
-const { seedDemoCatalogue } = require('./db/seed');
-const { seriesRouter } = require('./routes/series');
+import express from 'express';
+import type { Request } from 'express';
+import path from 'path';
+import jwt from 'jsonwebtoken';
+import type { Server } from 'http';
+import { createPool } from '../lib/db';
+import { migrate } from '../lib/schema';
+import { seedDemoCatalogue } from '../lib/seed';
+import { catalogueRouter } from './routes/catalogue';
+import { meRouter } from './routes/me';
+
+// Compiled to dist/app/server.js, so public/ is two levels up.
+const PUBLIC_DIR = path.resolve(__dirname, '..', '..', 'public');
 
 const app = express();
 const port = process.env.PORT || 3000;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = createPool();
 
 // The platform signs user-identity tokens with an RSA private key it never
 // shares. Containers get only the PUBLIC half, so this app can verify who a
@@ -78,7 +84,7 @@ app.get(/^\/usernode-(?:bridge|native|tailwind)\//, async (req, res) => {
     res.set('Cache-Control', 'public, max-age=0, must-revalidate');
     return res.send(Buffer.from(await upstream.arrayBuffer()));
   } catch (err) {
-    console.warn('hosted asset fetch failed: ' + err.message);
+    console.warn('hosted asset fetch failed: ' + (err as Error).message);
     return res.sendStatus(502);
   }
 });
@@ -94,7 +100,7 @@ app.get(/^\/usernode-(?:bridge|native|tailwind)\//, async (req, res) => {
 // platform conventions.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
-function requestNow(req) {
+function requestNow(req: Request): Date {
   const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
   return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
 }
@@ -111,24 +117,24 @@ app.use((req, res, next) => {
       // Pin the algorithm, issuer and audience. Without `algorithms` a
       // caller could hand us an HS256 token signed with the public PEM
       // (which every app knows) and forge any user.
-      const claims = jwt.verify(token, JWT_PUBLIC_KEY, {
+      const claims = jwt.verify(String(token), JWT_PUBLIC_KEY, {
         algorithms: ['RS256'],
         issuer: 'usernode',
         audience: APP_AUDIENCE,
       });
       // `pur` names what the token is for. Only user-identity tokens
       // authenticate a person here.
-      if (claims && claims.pur === 'iframe') req.user = claims;
+      if (typeof claims === 'object' && claims.pur === 'iframe') req.user = claims as unknown as Request['user'];
     } catch {}
   }
   if (!req.user && token && GUEST_PUBLIC_KEY && GUEST_AUDIENCE) {
     try {
-      const guest = jwt.verify(token, GUEST_PUBLIC_KEY, {
+      const guest = jwt.verify(String(token), GUEST_PUBLIC_KEY, {
         algorithms: ['ES256'],
         issuer: 'usernode',
         audience: GUEST_AUDIENCE,
       });
-      if (guest && guest.pur === 'guest' && guest.guest === true) req.guest = true;
+      if (typeof guest === 'object' && guest.pur === 'guest' && guest.guest === true) req.guest = true;
     } catch {}
   }
 
@@ -154,7 +160,10 @@ let shuttingDown = false;
 app.get('/health', (_req, res) =>
   shuttingDown ? res.status(503).json({ status: 'shutting_down' }) : res.json({ status: 'ok' }));
 
-app.use('/api/series', seriesRouter(pool, { isStaging: IS_STAGING }));
+// Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
+// personal: it requires a signed-in person and only touches their own rows.
+app.use('/api/me', meRouter(pool));
+app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
@@ -163,7 +172,7 @@ app.use('/api/series', seriesRouter(pool, { isStaging: IS_STAGING }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(PUBLIC_DIR));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -197,32 +206,33 @@ app.get('*', (req, res) => {
   </div>
 </body>`);
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 const DRAIN_MS = 3000;
-let server;
+let server: Server | undefined;
 
-async function shutdown(signal) {
+async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] ${signal} received, draining`);
-  if (server) {
-    server.close(() => {});
-    server.closeIdleConnections?.();
-    setTimeout(() => server.closeAllConnections?.(), DRAIN_MS).unref?.();
+  const srv = server;
+  if (srv) {
+    srv.close(() => {});
+    srv.closeIdleConnections?.();
+    setTimeout(() => srv.closeAllConnections?.(), DRAIN_MS).unref?.();
   }
   try {
     await pool.end();
   } catch (e) {
-    console.error('[shutdown] pool.end failed', e.message);
+    console.error('[shutdown] pool.end failed', (e as Error).message);
   }
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-async function start() {
+async function start(): Promise<void> {
   await migrate(pool);
   // Staging starts with empty tables for anything new, so give the preview a
   // demo catalogue. Production is never seeded.
