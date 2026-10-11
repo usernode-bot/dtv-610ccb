@@ -13,6 +13,7 @@ import {
   ensureProfile, listFollowed, listWatchHistory, minFavoriteGenres, saveFavoriteGenres, saveProgress,
   unlockEpisode,
 } from '../lib/me';
+import { getHomeFeed, listContinueWatching, listTrending } from '../lib/home';
 import { upsertProfileOnce } from '../lib/auth';
 import { catalogueRouter } from '../app/routes/catalogue';
 import { meRouter } from '../app/routes/me';
@@ -21,6 +22,8 @@ const url = process.env.DATABASE_URL;
 const opts = { skip: url ? false : 'DATABASE_URL not set' };
 const A = 987654321;
 const B = 987654322;
+const C = 987654323;
+const D = 987654324;
 
 test('schema is re-runnable and the seed is idempotent: 5 demo series x 20 episodes', opts, async () => {
   const pool = new Pool({ connectionString: url });
@@ -143,6 +146,7 @@ test('routes: catalogue is public, /api/me needs a signed-in person', opts, asyn
   app.use(express.json());
   // Stand-in for the platform token middleware: x-test-user picks the person.
   app.use((req, _res, next) => {
+    req.now = new Date();
     const id = req.headers['x-test-user'];
     if (id) req.user = { id: String(id), username: 'staging-test-' + id, usernode_pubkey: null, locale: null, pur: 'iframe' };
     next();
@@ -190,6 +194,58 @@ test('routes: catalogue is public, /api/me needs a signed-in person', opts, asyn
   }
 });
 
+test('home feed: hero, trending, continue watching and search', opts, async () => {
+  const pool = new Pool({ connectionString: url });
+  try {
+    await migrate(pool);
+    await seedDemoCatalogue(pool);
+    for (const t of ['follows', 'watch_history']) {
+      await pool.query(`DELETE FROM ${t} WHERE user_id IN ($1, $2)`, [C, D]);
+    }
+    await ensureProfile(pool, D, 'staging-test-d');
+    const now = new Date();
+
+    // A guest gets no "Continue watching" row; the hero is the demo series in seed order.
+    const guest = await getHomeFeed(pool, null, now);
+    assert.strictEqual(guest.continueWatching, null);
+    assert.deepStrictEqual(guest.featured.map((s) => s.slug), DEMO_SERIES.map((s) => s.slug));
+    assert.ok(guest.genreRows.length > 0 && guest.genreRows.length <= 3);
+    for (const row of guest.genreRows) {
+      assert.ok(row.series.length > 0);
+      for (const s of row.series) assert.strictEqual(s.genre, row.genre.name);
+    }
+
+    // Follows and a play this week make a series trend; a month later they no longer count.
+    const hot = DEMO_SERIES[3].slug;
+    await setFollow(pool, hot, C, true);
+    await setFollow(pool, hot, D, true);
+    const eps = (await listEpisodes(pool, hot, D))!;
+    await saveProgress(pool, D, eps[1].id, 30, false);
+    assert.strictEqual((await listTrending(pool, null, now))[0].slug, hot);
+    const later = new Date(now.getTime() + 30 * 86400_000);
+    assert.notStrictEqual((await listTrending(pool, null, later))[0].slug, hot);
+
+    // Continue watching is the viewer's own, and shows where they got to.
+    const cw = await listContinueWatching(pool, D);
+    assert.strictEqual(cw.length, 1);
+    assert.strictEqual(cw[0].slug, hot);
+    assert.strictEqual(cw[0].episodeNumber, 2);
+    assert.strictEqual(cw[0].positionSeconds, 30);
+    assert.deepStrictEqual(await listContinueWatching(pool, C), []);
+    // Finishing the last episode takes the series out of the row.
+    await saveProgress(pool, D, eps[eps.length - 1].id, 10, true);
+    assert.deepStrictEqual(await listContinueWatching(pool, D), []);
+
+    // Search: case-insensitive title match, combinable with a genre; % is literal.
+    assert.deepStrictEqual((await listSeries(pool, null, undefined, 'ROBOT')).map((s) => s.slug), ['little-robot-cooks']);
+    assert.strictEqual((await listSeries(pool, null, 'comedy', 'robot')).length, 0);
+    assert.strictEqual((await listSeries(pool, null, undefined, '%')).length, 0);
+    assert.ok((await listSeries(pool, null, undefined, '  ')).length >= 5);
+  } finally {
+    await pool.end();
+  }
+});
+
 test('onboarding: favourite genres are validated and saved; unlock spends coins once', opts, async () => {
   const pool = new Pool({ connectionString: url });
   try {
@@ -232,11 +288,12 @@ test('onboarding: favourite genres are validated and saved; unlock spends coins 
   }
 });
 
-test('routes: profile is created on first request; guests get account_required with an action', opts, async () => {
+test('routes: profile creation, account_required, /api/home, /api/viewer and /api/series?q=', opts, async () => {
   const pool = new Pool({ connectionString: url });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
+    req.now = new Date();
     const id = req.headers['x-test-user'];
     if (id) req.user = { id: String(id), username: 'staging-test-' + id, usernode_pubkey: null, locale: null, pur: 'iframe' };
     next();
@@ -284,6 +341,19 @@ test('routes: profile is created on first request; guests get account_required w
     // Free episodes stay playable for guests.
     const freeEp = await (await send(`/api/episodes/${eps.episodes[0].id}`, 'GET')).json() as any;
     assert.ok(freeEp.episode.videoUrl);
+
+    const guest = await (await fetch(base + '/api/home')).json() as any;
+    assert.strictEqual(guest.demo, true);
+    assert.strictEqual(guest.featured.length, 5);
+    assert.strictEqual(guest.continueWatching, null);
+    assert.ok(guest.trending.length >= 5 && guest.newReleases.length >= 5);
+    const signedIn = await (await fetch(base + '/api/home', { headers: { 'x-test-user': String(C) } })).json() as any;
+    assert.ok(Array.isArray(signedIn.continueWatching));
+    assert.deepStrictEqual(await (await fetch(base + '/api/viewer')).json(), { signedIn: false });
+    const viewer = await (await fetch(base + '/api/viewer', { headers: { 'x-test-user': String(D) } })).json() as any;
+    assert.deepStrictEqual(viewer, { signedIn: true, username: 'staging-test-' + D, coinBalance: 0 });
+    const found = await (await fetch(base + '/api/series?q=garden')).json() as any;
+    assert.deepStrictEqual(found.series.map((s: any) => s.slug), ['garden-club-mysteries']);
   } finally {
     server.close();
     await pool.end();

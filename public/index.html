@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   
   <script>
   // usernode-dev-console@1
@@ -108,7 +108,47 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main id="app" class="mx-auto max-w-2xl px-4 py-6"></main>
+  <!-- Top bar: the app's name (home), search, and the viewer's coins once
+       signed in. Icons are Lucide (ISC licence). -->
+  <header class="sticky top-0 z-20 border-b border-line bg-ground/95 backdrop-blur">
+    <div class="mx-auto flex h-14 max-w-2xl items-center gap-1 px-2">
+      <a href="/" data-nav class="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-heading text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label="Dtv home">
+        <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+        Dtv
+      </a>
+      <span class="flex-1"></span>
+      <a id="search-button" href="/discover" data-nav aria-label="Search" class="inline-flex h-11 w-11 items-center justify-center rounded-lg text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </a>
+      <a id="coins-badge" href="/profile" data-nav hidden data-testid="coins-badge" class="inline-flex min-h-11 items-center gap-1.5 rounded-full px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-raised px-3 py-1 text-small font-semibold text-fg">
+          <svg class="h-4 w-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></svg>
+          <span id="coins-count">0</span>
+        </span>
+      </a>
+    </div>
+  </header>
+  <main id="app" class="mx-auto max-w-2xl px-4 pt-4" style="padding-bottom: calc(6rem + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)))"></main>
+  <nav aria-label="Main" class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-ground/95 backdrop-blur" style="padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))">
+    <div class="mx-auto flex max-w-2xl">
+      <a href="/" data-nav data-tab="home" class="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-small font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="/discover" data-nav data-tab="discover" class="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-small font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Discover
+      </a>
+      <a href="/my-list" data-nav data-tab="my-list" class="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-small font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+        My list
+      </a>
+      <a href="/profile" data-nav data-tab="profile" class="flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-small font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Profile
+      </a>
+    </div>
+  </nav>
   <script src="/js/app.js"></script>
 </body>
 </html>

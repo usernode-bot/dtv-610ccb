@@ -10,9 +10,32 @@
   },
   "tests": [
     {
-      "id": "series.browse",
-      "name": "Series browse grid renders",
+      "id": "home.default",
+      "name": "Home shows the hero carousel and rows",
       "path": "/",
+      "expectSelector": "[data-testid=hero] [aria-roledescription=slide] ~ [aria-roledescription=slide]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**",
+        "styles/**"
+      ]
+    },
+    {
+      "name": "Home shows the trending row",
+      "path": "/",
+      "expectSelector": "[data-testid=row-trending] [data-testid=series-card]"
+    },
+    {
+      "name": "Home shows a genre row",
+      "path": "/",
+      "expectSelector": "[data-testid=row-genre] [data-testid=series-card]"
+    },
+    {
+      "id": "series.browse",
+      "name": "Discover lists every series",
+      "path": "/#/discover",
       "expectSelector": "[data-testid=series-grid]",
       "visual": true,
       "impact": [
@@ -20,6 +43,23 @@
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "id": "discover.search",
+      "name": "Discover search finds a series by title",
+      "path": "/#/discover?q=robot",
+      "expectText": "1 series",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Discover shows genre chips",
+      "path": "/#/discover",
+      "expectSelector": "[data-testid=genre-chips] [data-genre=comedy]"
     },
     {
       "id": "series.detail",
