@@ -143,6 +143,12 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- **Coins change only inside the `dtv_*` Postgres functions** in
+  `lib/schema.ts`, each of which locks the person's `profiles` row first.
+  Never update `coin_balance` or write `coin_transactions` anywhere else, and
+  never take a price, reward or coin amount from the client.
+- `coin_transactions` is append-only. A new ledger `type` must be added to both
+  the CHECK and the boot-time clean-up `UPDATE` list beside it in
+  `lib/schema.ts`, or the next boot rewrites it to `reward`.
+- Days (check-in streak, daily ad limit) are UTC days of `req.now`.
+- Money is integer cents (`coin_purchases.amount_cents`).

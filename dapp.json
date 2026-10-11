@@ -3,7 +3,26 @@
   "icon": {
     "emoji": "\ud83c\udfac"
   },
-  "secrets": [],
+  "secrets": [
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "description": "Stripe secret key for the coin store (sk_live_... in production), from the Stripe Dashboard under Developers > API keys. Until it and STRIPE_WEBHOOK_SECRET are set, the coin store says payments are not set up yet.",
+      "required": false,
+      "private": true
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "description": "Signing secret (whsec_...) of the Stripe webhook endpoint https://<this app's address>/api/stripe/webhook, subscribed to checkout.session.completed and checkout.session.async_payment_succeeded. Coins are credited only from events signed with it.",
+      "required": false,
+      "private": true
+    },
+    {
+      "key": "AD_PROVIDER",
+      "description": "Which rewarded-ad provider unlocks episodes. Only \"mock\" (a 5-second sample ad) exists today.",
+      "required": false,
+      "default": "mock"
+    }
+  ],
   "visibility": {
     "build": "public",
     "view": "public"
@@ -63,12 +82,39 @@
       "name": "Series detail offers follow and unlock",
       "path": "/#/series/bakery-on-maple-street",
       "expectSelector": "[data-testid=episode-list] [data-testid=unlock-button]"
+    },
+    {
+      "id": "coins.store",
+      "name": "Coins page shows the daily check-in and the coin store",
+      "path": "/store",
+      "expectSelector": "[data-testid=payments-not-configured]",
+      "expectText": "Daily check-in",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Transaction history renders",
+      "path": "/history",
+      "expectText": "Transaction history"
+    },
+    {
+      "name": "Browse shows the coin balance",
+      "path": "/",
+      "expectSelector": "[data-testid=coin-balance]"
     }
   ],
   "private_tables": [
     "profiles",
     "watch_history",
     "coin_transactions",
-    "unlocked_episodes"
+    "unlocked_episodes",
+    "daily_check_ins",
+    "ad_sessions",
+    "coin_purchases",
+    "stripe_events"
   ]
 }

@@ -51,6 +51,8 @@ export interface SeriesDetail extends SeriesSummary {
    * when the last episode watched was the final one.
    */
   continueEpisode: { id: number; number: number; resume: boolean } | null;
+  /** The rest of the series at a discount; null when fewer than 2 episodes are locked. */
+  bundle: BundleQuote | null;
 }
 
 export interface Profile {
@@ -76,15 +78,44 @@ export interface WatchHistoryItem {
   updatedAt: string;
 }
 
-export type CoinTransactionType = 'purchase' | 'unlock' | 'reward' | 'ad';
+export type CoinTransactionType = 'purchase' | 'unlock' | 'bundle' | 'check_in' | 'reward' | 'ad';
 
 export interface CoinTransaction {
   id: number;
   amount: number;
   type: CoinTransactionType;
   episodeId: number | null;
+  seriesId: number | null;
   note: string;
+  /** What it was, in plain words ("Bought 500 coins"). */
+  label: string;
   createdAt: string;
+}
+
+/** Unlocking every remaining paid episode of a series at a discount. */
+export interface BundleQuote {
+  episodeCount: number;
+  fullPrice: number;
+  price: number;
+  savings: number;
+}
+
+export interface CoinPackage {
+  id: string;
+  coins: number;
+  amountCents: number;
+  currency: string;
+}
+
+/** The viewer's daily check-in, as of today (UTC). */
+export interface CheckInState {
+  /** Streak days already collected in the current run (0..7). */
+  streakDay: number;
+  claimedToday: boolean;
+  /** The streak day the next check-in counts as (1..7), and its coins. */
+  nextDay: number;
+  nextReward: number;
+  rewards: number[];
 }
 
 /** Claims of a verified platform user token. */
