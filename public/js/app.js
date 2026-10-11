@@ -1,5 +1,8 @@
-// Dtv front end: a series browse screen and a series detail screen.
-// Hash routes: "#/" (browse) and "#/series/<slug>" (detail). Everything is
+// Dtv front end: a series browse screen, a series detail screen and the genre
+// onboarding. Hash routes: "#/" (browse), "#/series/<slug>" (detail) and
+// "#/onboarding". Onboarding is a full-screen layer over the page, shown on
+// its own route and, for a signed-in person who has not picked genres yet,
+// on every route until they do. Everything is
 // built with DOM calls and textContent, so catalogue text is never parsed as
 // HTML. Class names are whole literals so the Tailwind build can see them.
 //
@@ -17,14 +20,31 @@
   // The iframe is opened with ?token=...; forward it on every API call.
   var token = new URLSearchParams(location.search).get('token');
 
+  // Who is looking: { profile, onboarding } once /api/me answers, 'guest' when
+  // it says account_required, null when it could not be asked.
+  var me = null;
+
+  function isGuest() { return me === 'guest'; }
+
+  /** Ask a guest to make an account (the platform's own sheet). */
+  function askForAccount(action) {
+    try {
+      var p = window.usernode && window.usernode.askForAccount && window.usernode.askForAccount({ action: action });
+      if (p && p.catch) p.catch(function () {});
+    } catch (_) {}
+  }
+
   /** @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status */
-  function api(path, method) {
+  function api(path, method, body) {
     var headers = {};
+    if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers['x-usernode-token'] = token;
     if (window.usernode && window.usernode.previewNow && window.usernode.now) {
       headers['x-usernode-now'] = window.usernode.now().toISOString();
     }
-    return fetch(path, { method: method || 'GET', headers: headers }).then(function (res) {
+    var init = { method: method || 'GET', headers: headers };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    return fetch(path, init).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
           var err = new Error(body.error || 'Request failed');
@@ -169,10 +189,13 @@
   }
 
   // ── Detail ────────────────────────────────────────────────────────────
-  function episodeRow(/** @type {EpisodeItem} */ e) {
+  function episodeRow(/** @type {EpisodeItem} */ e, onUnlock) {
     var status;
     if (e.state === 'locked') {
-      status = h('span', 'inline-flex items-center gap-1 text-small text-muted', [lockIcon(), plural(e.coinPrice, 'coin', 'coins')]);
+      status = h('button', 'btn-secondary', [lockIcon(), 'Unlock for ' + plural(e.coinPrice, 'coin', 'coins')]);
+      status.type = 'button';
+      status.dataset.testid = 'unlock-button';
+      status.addEventListener('click', function () { onUnlock(e, status); });
     } else {
       status = h('span', 'text-small font-medium ' + (e.state === 'free' ? 'text-accent' : 'text-muted'), e.state === 'free' ? 'Free' : 'Unlocked');
     }
@@ -207,7 +230,9 @@
         followBtn.setAttribute('aria-pressed', following ? 'true' : 'false');
       }
       paintFollow();
+      followBtn.dataset.testid = 'follow-button';
       followBtn.addEventListener('click', function () {
+        if (isGuest()) return askForAccount('follow this series');
         followBtn.disabled = true;
         message.textContent = '';
         api('/api/series/' + encodeURIComponent(slug) + '/follow', following ? 'DELETE' : 'PUT')
@@ -218,6 +243,22 @@
           })
           .then(function () { followBtn.disabled = false; paintFollow(); });
       });
+
+      function unlock(e, btn) {
+        if (isGuest()) return askForAccount('unlock this episode');
+        btn.disabled = true;
+        message.textContent = '';
+        api('/api/episodes/' + e.id + '/unlock', 'POST')
+          .then(function (r) {
+            var row = episodeRow(r.episode, unlock);
+            btn.closest('li').replaceWith(row);
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            if (err.status === 402) message.textContent = 'Not enough coins to unlock episode ' + e.number + '.';
+            else if (err.status !== 401) message.textContent = 'Could not unlock. Try again.';
+          });
+      }
 
       var free = s.episodes.filter(function (e) { return e.state !== 'locked'; }).length;
       var page = h('div', 'flex flex-col gap-6', [
@@ -238,7 +279,7 @@
             ? (function () {
                 var ul = h('ul', 'list');
                 ul.dataset.testid = 'episode-list';
-                s.episodes.forEach(function (e) { ul.appendChild(episodeRow(e)); });
+                s.episodes.forEach(function (e) { ul.appendChild(episodeRow(e, unlock)); });
                 return ul;
               })()
             : h('div', 'state-empty', [
@@ -261,12 +302,152 @@
     });
   }
 
+  // ── Onboarding ────────────────────────────────────────────────────────
+  // Always the dark look: the layer carries the "dark" class, so the colour
+  // tokens inside it take their dark values whatever the viewer's theme.
+  var layer = null;
+
+  function onboardingDue() {
+    return !!(me && me !== 'guest' && me.onboarding.required);
+  }
+
+  function closeOnboarding() {
+    if (layer) { layer.remove(); layer = null; }
+    document.body.classList.remove('overflow-hidden');
+  }
+
+  function openOnboarding() {
+    if (layer) return;
+    layer = h('div', 'dark fixed inset-0 z-50 overflow-y-auto bg-ground text-fg');
+    layer.setAttribute('role', 'dialog');
+    layer.setAttribute('aria-modal', 'true');
+    layer.setAttribute('aria-labelledby', 'onboarding-title');
+    document.body.appendChild(layer);
+    document.body.classList.add('overflow-hidden');
+    renderOnboarding();
+  }
+
+  function onboardingFrame(children) {
+    var title = h('h1', 'text-title', 'What do you like to watch?');
+    title.id = 'onboarding-title';
+    return h('div', 'mx-auto flex min-h-full max-w-md flex-col gap-6 px-6 pb-8 pt-16', [title].concat(children));
+  }
+
+  function renderOnboarding() {
+    if (!layer) return;
+    var skel = h('div', 'flex flex-wrap gap-2');
+    for (var i = 0; i < 8; i++) skel.appendChild(h('div', 'skeleton h-11 w-28 rounded-full'));
+    layer.replaceChildren(onboardingFrame([skel]));
+
+    api('/api/genres').then(function (data) {
+      if (!layer) return;
+      var genres = data.genres;
+      var min = me && me !== 'guest' ? me.onboarding.minGenres : Math.min(3, genres.length);
+      var picked = new Set(me && me !== 'guest' ? me.profile.favoriteGenres : []);
+      var due = onboardingDue();
+
+      if (!genres.length) {
+        var backBtn = h('button', 'btn-secondary', 'Back to series');
+        backBtn.type = 'button';
+        backBtn.addEventListener('click', function () { location.hash = '#/'; });
+        layer.replaceChildren(onboardingFrame([h('div', 'state-empty', [
+          h('h2', 'text-heading', 'No genres yet'),
+          h('p', 'text-body text-muted', 'You can pick favourites once the first genres are added.'),
+          backBtn,
+        ])]));
+        return;
+      }
+
+      var picker = h('div', 'flex flex-wrap gap-2');
+      picker.dataset.testid = 'genre-picker';
+      var save = h('button', 'btn-primary w-full');
+      save.type = 'button';
+      save.dataset.testid = 'genres-save';
+      var message = h('p', 'text-small text-danger');
+      message.setAttribute('role', 'alert');
+
+      function paintSave() {
+        var left = min - picked.size;
+        save.disabled = left > 0;
+        save.textContent = left > 0 ? 'Pick ' + left + ' more' : 'Start watching';
+      }
+
+      genres.forEach(function (g) {
+        var chip = h('button', '', g.name);
+        chip.type = 'button';
+        function paint() {
+          var on = picked.has(g.slug);
+          chip.className = on
+            ? 'inline-flex min-h-11 items-center rounded-full border border-accent bg-accent px-4 text-body font-medium text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
+            : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus';
+          chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        paint();
+        chip.addEventListener('click', function () {
+          if (picked.has(g.slug)) picked.delete(g.slug); else picked.add(g.slug);
+          paint();
+          paintSave();
+        });
+        picker.appendChild(chip);
+      });
+      paintSave();
+
+      save.addEventListener('click', function () {
+        if (isGuest()) return askForAccount('save your favourite genres');
+        save.disabled = true;
+        message.textContent = '';
+        api('/api/me/genres', 'POST', { genres: Array.from(picked) }).then(function (r) {
+          me.profile = r.profile;
+          me.onboarding.required = false;
+          closeOnboarding();
+          if (location.hash === '#/onboarding') location.hash = '#/';
+        }).catch(function (err) {
+          if (err.status !== 401) message.textContent = 'Could not save your genres. Try again.';
+          paintSave();
+        });
+      });
+
+      var later = null;
+      if (!due) {
+        later = h('button', 'btn-secondary w-full', 'Not now');
+        later.type = 'button';
+        later.addEventListener('click', function () { location.hash = '#/'; });
+      }
+
+      layer.replaceChildren(onboardingFrame([
+        h('p', 'text-body text-muted', 'Pick at least ' + plural(min, 'genre', 'genres') + '. We use them to suggest series for you.'),
+        picker,
+        h('div', 'mt-auto flex flex-col gap-3 pt-4', [message, save, later]),
+      ]));
+    }).catch(function () {
+      if (!layer) return;
+      var retry = h('button', 'btn-primary', 'Retry');
+      retry.type = 'button';
+      retry.addEventListener('click', renderOnboarding);
+      layer.replaceChildren(onboardingFrame([h('div', 'state-error', [
+        h('h2', 'text-heading', 'Could not load genres'),
+        h('p', 'text-body text-muted', 'Check your connection and try again.'),
+        retry,
+      ])]));
+    });
+  }
+
   // ── Routing ───────────────────────────────────────────────────────────
   function route() {
     var m = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (m) renderDetail(decodeURIComponent(m[1]));
     else renderBrowse();
+    if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
+    else closeOnboarding();
   }
-  window.addEventListener('hashchange', route);
-  route();
+
+  show(/^#\/series\//.test(location.hash) ? loadingDetail() : loadingBrowse());
+  // Ask who is looking first, so the buttons know whether to ask a guest to
+  // make an account and onboarding knows whether it is due.
+  api('/api/me').then(function (data) { me = data; }, function (err) {
+    if (err.status === 401) me = 'guest';
+  }).then(function () {
+    window.addEventListener('hashchange', route);
+    route();
+  });
 })();

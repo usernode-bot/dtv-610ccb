@@ -5,15 +5,31 @@ import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
 import {
-  ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory, saveProgress,
+  ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory,
+  minFavoriteGenres, saveFavoriteGenres, saveProgress,
 } from '../../lib/me';
 
 export function meRouter(pool: Pool): express.Router {
   const router = express.Router();
   router.use(requireUser);
 
+  // Who is signed in, and whether the genre onboarding is still due (it is
+  // skipped while there are no genres to pick from).
   router.get('/', wrap(async (req, res) => {
-    res.json({ profile: await ensureProfile(pool, userId(req)!, String(req.user!.username)) });
+    const profile = await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const minGenres = await minFavoriteGenres(pool);
+    res.json({
+      profile,
+      onboarding: { required: !profile.onboardedAt && minGenres > 0, minGenres },
+    });
+  }));
+
+  // Onboarding: the genres the person picked (genre slugs, at least minGenres).
+  router.post('/genres', wrap(async (req, res) => {
+    const result = await saveFavoriteGenres(
+      pool, userId(req)!, String(req.user!.username), req.body?.genres);
+    if (typeof result === 'string') return void res.status(400).json({ error: result });
+    res.json({ profile: result });
   }));
 
   router.get('/follows', wrap(async (req, res) => {

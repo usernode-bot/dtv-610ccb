@@ -44,6 +44,10 @@ export interface Profile {
   username: string;
   avatarUrl: string | null;
   coinBalance: number;
+  /** Genre slugs picked during onboarding. */
+  favoriteGenres: string[];
+  /** When onboarding was finished, or null while it is still due. */
+  onboardedAt: string | null;
   createdAt: string;
 }
 
