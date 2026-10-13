@@ -4,7 +4,8 @@ Watch movies and dramas together with the group. Express + TypeScript server
 with Postgres. The catalogue: a series browse screen (`/`) and a series detail
 page (`/series/<slug>`: cover, genre, expandable description, episode and view
 counts, Watch now / Continue, follow, share, a 5-per-row episode grid and related
-series), plain JS in `public/`. Episodes link to `/watch/<episodeId>`, a
+series), and My List (`/my-list`: the series you follow, and `/my-list/history`: episodes you
+opened, most recent first), plain JS in `public/`. Episodes link to `/watch/<episodeId>`, a
 placeholder until the player lands; locked episodes call `window.dtv.openUnlockSheet`
 (a stub until the unlock sheet lands). There is no player, payment or ad support yet.
 
@@ -43,6 +44,7 @@ Public (guests may read): `GET /api/genres`, `GET /api/series[?genre=<slug>]`, `
 
 Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/series/:slug/follow`,
 `GET /api/me`, `GET /api/me/follows`, `GET|PUT /api/me/watch-history[/:episodeId]`,
+`POST /api/me/watch-history/:episodeId/play` (the watch screen records an opened free or unlocked episode),
 `GET /api/me/unlocked`, `GET /api/me/coin-transactions`.
 
 ## Admin
