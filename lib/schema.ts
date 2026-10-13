@@ -96,6 +96,9 @@ const STATEMENTS: string[] = [
   // Languages with subtitles, as BCP-47 tags ('en', 'zh-Hans', 'ko').
   `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS subtitle_langs TEXT[] NOT NULL DEFAULT '{}'`,
   `CREATE INDEX IF NOT EXISTS series_country_format_idx ON series (country, format)`,
+  // Only published series show to viewers. Rows from before the series
+  // manager stay published; a series an admin adds starts unpublished.
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT TRUE`,
 
   // Who follows which series. user_id is the platform user id from the token.
   `CREATE TABLE IF NOT EXISTS follows (

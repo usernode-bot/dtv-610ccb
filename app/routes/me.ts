@@ -4,6 +4,7 @@
 import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
+import { isAdmin } from '../../lib/admin';
 import {
   ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory,
   minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress,
@@ -13,14 +14,16 @@ export function meRouter(pool: Pool): express.Router {
   const router = express.Router();
   router.use(requireUser);
 
-  // Who is signed in, and whether the genre onboarding is still due (it is
-  // skipped while there are no genres to pick from).
+  // Who is signed in, whether the genre onboarding is still due (it is
+  // skipped while there are no genres to pick from), and whether they may
+  // manage series.
   router.get('/', wrap(async (req, res) => {
     const profile = await ensureProfile(pool, userId(req)!, String(req.user!.username));
     const minGenres = await minFavoriteGenres(pool);
     res.json({
       profile,
       onboarding: { required: !profile.onboardedAt && minGenres > 0, minGenres },
+      isAdmin: isAdmin(req),
     });
   }));
 
