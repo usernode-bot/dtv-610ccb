@@ -22,6 +22,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --chown=1000:1000 public ./public
+COPY --chown=1000:1000 brand ./brand
 COPY --chown=1000:1000 --from=build /build/dist ./dist
 COPY --chown=1000:1000 --from=build /build/public/tailwind.css ./public/tailwind.css
 EXPOSE 3000

@@ -1,6 +1,7 @@
 // Public catalogue queries: genres, series, episodes, and follow state.
 // Every function takes the pool first and returns plain camelCase objects.
-// `userId` is the signed-in person's id, or null for a guest.
+// `userId` is the signed-in person's id, or null for a guest. Viewers only
+// ever see published series (series.is_published) and their episodes.
 
 import type { Pool } from 'pg';
 import type {
@@ -16,13 +17,15 @@ const SUMMARY_SQL = `
                   WHERE f.series_id = s.id AND f.user_id = $1) AS following
     FROM series s
     LEFT JOIN episodes e ON e.series_id = s.id
+   WHERE s.is_published
    GROUP BY s.id`;
 
 const EPISODE_SQL = `
   SELECT e.id, e.series_id, e.number, e.title, e.duration_seconds, e.coin_price, e.video_url,
          EXISTS (SELECT 1 FROM unlocked_episodes u
                   WHERE u.episode_id = e.id AND u.user_id = $1) AS unlocked
-    FROM episodes e`;
+    FROM episodes e
+    JOIN series ps ON ps.id = e.series_id AND ps.is_published`;
 
 function toSummary(r: any): SeriesSummary {
   return {
@@ -77,7 +80,7 @@ export async function listSeries(
 export async function listEpisodes(
   pool: Pool, slug: string, userId: number | null,
 ): Promise<EpisodeItem[] | null> {
-  const s = await pool.query('SELECT id FROM series WHERE slug = $1', [slug]);
+  const s = await pool.query('SELECT id FROM series WHERE slug = $1 AND is_published', [slug]);
   if (!s.rows.length) return null;
   const { rows } = await pool.query(
     `${EPISODE_SQL} WHERE e.series_id = $2 ORDER BY e.number`, [userId, s.rows[0].id]);
@@ -137,7 +140,7 @@ export async function getSeries(
 export async function listRelated(
   pool: Pool, slug: string, userId: number | null, limit = 6,
 ): Promise<SeriesSummary[] | null> {
-  const s = await pool.query('SELECT id, genre_id FROM series WHERE slug = $1', [slug]);
+  const s = await pool.query('SELECT id, genre_id FROM series WHERE slug = $1 AND is_published', [slug]);
   if (!s.rows.length) return null;
   const { rows } = await pool.query(
     `SELECT q.* FROM (${SUMMARY_SQL}) q
@@ -152,7 +155,7 @@ export async function listRelated(
 export async function setFollow(
   pool: Pool, slug: string, userId: number, follow: boolean,
 ): Promise<boolean | null> {
-  const s = await pool.query('SELECT id FROM series WHERE slug = $1', [slug]);
+  const s = await pool.query('SELECT id FROM series WHERE slug = $1 AND is_published', [slug]);
   if (!s.rows.length) return null;
   const id = s.rows[0].id;
   if (follow) {
