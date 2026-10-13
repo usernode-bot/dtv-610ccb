@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dtv</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- Shown by the service worker (public/sw.js) when a page cannot load.
+       Self-contained: the platform bridge cannot load offline, so the theme
+       comes from the frame's ?un-theme= (or the device) and the language
+       from the app's saved choice (or the device). -->
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search).get('un-theme');
+      var dark = q ? q === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-2 px-6 text-center">
+    <h1 class="text-title" id="offline-title">You are offline</h1>
+    <p class="text-body text-muted" id="offline-body">Dtv needs a connection to load series and episodes. Connect to the internet and try again.</p>
+    <button type="button" class="btn-primary mt-4" id="offline-retry">Try again</button>
+  </main>
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('dtv.locale'); } catch (_) {}
+      var lang = (saved || navigator.language || 'en').toLowerCase().split('-')[0];
+      if (lang === 'id' || lang === 'in') {
+        document.documentElement.lang = 'id';
+        document.getElementById('offline-title').textContent = 'Anda sedang offline';
+        document.getElementById('offline-body').textContent = 'Dtv memerlukan koneksi untuk memuat serial dan episode. Sambungkan ke internet lalu coba lagi.';
+        document.getElementById('offline-retry').textContent = 'Coba lagi';
+      }
+      document.getElementById('offline-retry').addEventListener('click', function () { location.reload(); });
+      window.addEventListener('online', function () { location.reload(); });
+    })();
+  </script>
+</body>
+</html>

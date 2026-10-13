@@ -143,6 +143,12 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- **Every string a person reads goes through `t(key)`** from `public/js/i18n.js`,
+  with an English and an Indonesian value. Add both when adding a string.
+- **Analytics events are recorded server-side where they happen**
+  (`trackEvent` in `lib/analytics.ts`); the page only sends `drop_off`.
+  `analytics_events` is private.
+- **Only the guest view of the catalogue is cached** (`SwrCache`); never cache
+  anything that carries a person's own follows, progress or coins.
+- The service worker never caches `/api/*`, pages or the platform's
+  `/usernode-*` files; bump `CACHE` in `public/sw.js` when its file list changes.

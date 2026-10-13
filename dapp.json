@@ -4,7 +4,15 @@
     "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
-  "secrets": [],
+  "secrets": [
+    {
+      "key": "SENTRY_DSN",
+      "description": "Sentry DSN for error monitoring (Sentry > Project settings > Client Keys (DSN)), like https://<key>@o0.ingest.sentry.io/<project>. Leave unset to turn error reporting off.",
+      "required": false,
+      "private": true,
+      "staging_default": ""
+    }
+  ],
   "visibility": {
     "build": "public",
     "view": "public"
@@ -87,12 +95,52 @@
       "name": "Browse links to My List",
       "path": "/",
       "expectSelector": "[data-testid=my-list-link]"
+    },
+    {
+      "id": "seo.series-meta",
+      "name": "Series page has its own title, description and Open Graph tags",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "meta[property=\"og:title\"][content^=\"Bakery on Maple Street\"]",
+      "expectText": "Watch now"
+    },
+    {
+      "name": "Page links the web manifest",
+      "path": "/",
+      "expectSelector": "link[rel=manifest][href=\"/manifest.webmanifest\"]"
+    },
+    {
+      "name": "Offline page renders",
+      "path": "/offline.html",
+      "expectText": "You are offline"
+    },
+    {
+      "name": "robots.txt points at the sitemap",
+      "path": "/robots.txt",
+      "expectText": "sitemap.xml"
+    },
+    {
+      "id": "browse.language",
+      "name": "Browse offers English and Indonesian",
+      "path": "/",
+      "expectSelector": "[data-testid=language-select] option[value=id]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Skip link leads to the content",
+      "path": "/my-list",
+      "expectSelector": "a#skip-link[href=\"#app\"]"
     }
   ],
   "private_tables": [
     "profiles",
     "watch_history",
     "coin_transactions",
-    "unlocked_episodes"
+    "unlocked_episodes",
+    "analytics_events"
   ]
 }
