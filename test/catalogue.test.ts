@@ -8,9 +8,11 @@ import type { AddressInfo } from 'net';
 import { Pool } from 'pg';
 import { migrate } from '../lib/schema';
 import { DEMO_SERIES, DEMO_SUBTITLES, EPISODES_PER_SERIES, seedDemoCatalogue } from '../lib/seed';
-import { getSeries, getWatchPayload, listEpisodes, listGenres, listSeries, setFollow } from '../lib/catalogue';
 import {
-  ensureProfile, listFollowed, listWatchHistory, minFavoriteGenres, saveFavoriteGenres, saveProgress,
+  getSeries, getWatchPayload, listEpisodes, listGenres, listRelated, listSeries, setFollow,
+} from '../lib/catalogue';
+import {
+  ensureProfile, listFollowed, listWatchHistory, minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress,
   unlockEpisode,
 } from '../lib/me';
 import { upsertProfileOnce } from '../lib/auth';
@@ -96,6 +98,49 @@ test('follows, unlocks and watch history are per person; locked streams stay hid
   }
 });
 
+test('series detail: progress, continue target, view count and related series', opts, async () => {
+  const pool = new Pool({ connectionString: url });
+  try {
+    await migrate(pool);
+    await seedDemoCatalogue(pool);
+    await pool.query('DELETE FROM watch_history WHERE user_id IN ($1, $2)', [A, B]);
+    await ensureProfile(pool, A, 'staging-test-a');
+    const slug = DEMO_SERIES[1].slug;
+
+    const fresh = (await getSeries(pool, slug, A))!;
+    assert.strictEqual(fresh.continueEpisode, null);
+    assert.ok(fresh.episodes.every((e) => e.positionSeconds === null && !e.watched));
+    const views = fresh.viewCount;
+    assert.ok(views > 0, 'staging seed gives demo series a view count');
+
+    // Starting episode 1 counts one view; saving progress again does not.
+    const [e1, e2] = fresh.episodes;
+    await saveProgress(pool, A, e1.id, 30, false);
+    await saveProgress(pool, A, e1.id, 60, false);
+    let s = (await getSeries(pool, slug, A))!;
+    assert.strictEqual(s.viewCount, views + 1);
+    assert.deepStrictEqual(s.continueEpisode, { id: e1.id, number: 1, resume: true });
+    assert.strictEqual(s.episodes[0].positionSeconds, 60);
+
+    // Finishing it moves Continue on to the next episode.
+    await saveProgress(pool, A, e1.id, 150, true);
+    s = (await getSeries(pool, slug, A))!;
+    assert.strictEqual(s.episodes[0].watched, true);
+    assert.deepStrictEqual(s.continueEpisode, { id: e2.id, number: 2, resume: false });
+
+    // Someone else's history never shows.
+    assert.strictEqual((await getSeries(pool, slug, B))!.continueEpisode, null);
+    assert.strictEqual((await getSeries(pool, slug, null))!.episodes[0].watched, false);
+
+    const related = (await listRelated(pool, slug, null))!;
+    assert.ok(related.length >= 4);
+    assert.ok(related.every((r) => r.slug !== slug));
+    assert.strictEqual(await listRelated(pool, 'no-such-series', null), null);
+  } finally {
+    await pool.end();
+  }
+});
+
 test('routes: catalogue is public, /api/me needs a signed-in person', opts, async () => {
   const pool = new Pool({ connectionString: url });
   const app = express();
@@ -124,6 +169,9 @@ test('routes: catalogue is public, /api/me needs a signed-in person', opts, asyn
     assert.strictEqual(eps.episodes.length, EPISODES_PER_SERIES);
     assert.strictEqual((await get(`/api/episodes/${eps.episodes[0].id}`)).status, 200);
     assert.strictEqual((await get('/api/episodes/0')).status, 404);
+    const related = await (await get(`/api/series/${DEMO_SERIES[0].slug}/related`)).json() as any;
+    assert.ok(related.series.length >= 4);
+    assert.strictEqual((await get('/api/series/no-such-series/related')).status, 404);
 
     for (const p of ['/api/me', '/api/me/follows', '/api/me/watch-history', '/api/me/unlocked', '/api/me/coin-transactions']) {
       const r = await get(p);
@@ -261,7 +309,6 @@ test('player: /api/watch gives the series as a feed, hides locked streams and re
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
     await migrate(pool);
-    await migrate(pool);
     await seedDemoCatalogue(pool);
     const bakery = DEMO_SERIES[0];
     // Its own two people, removed again at the end, so other tests keep fresh profiles.
@@ -328,6 +375,64 @@ test('player: /api/watch gives the series as a feed, hides locked streams and re
     assert.strictEqual((await get('/api/watch/abc')).status, 404);
   } finally {
     await pool.query('DELETE FROM profiles WHERE id IN ($1, $2)', [C, D]).catch(() => {});
+    server.close();
+    await pool.end();
+  }
+});
+
+test('my list: playing an episode records it in watch history, newest first, keeping progress', opts, async () => {
+  const pool = new Pool({ connectionString: url });
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    const id = req.headers['x-test-user'];
+    if (id) req.user = { id: String(id), username: 'staging-test-' + id, usernode_pubkey: null, locale: null, pur: 'iframe' };
+    next();
+  });
+  app.use('/api/me', meRouter(pool));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    await migrate(pool);
+    await seedDemoCatalogue(pool);
+    await pool.query('DELETE FROM watch_history WHERE user_id IN ($1, $2)', [A, B]);
+    await pool.query('DELETE FROM unlocked_episodes WHERE user_id = $1', [A]);
+    await ensureProfile(pool, A, 'staging-test-a');
+    const first = (await listEpisodes(pool, DEMO_SERIES[0].slug, A))!;
+    const other = (await listEpisodes(pool, DEMO_SERIES[1].slug, A))!;
+    const views = async () => (await getSeries(pool, DEMO_SERIES[0].slug, null))!.viewCount;
+
+    const before = await views();
+    assert.strictEqual(await recordPlay(pool, A, first[0].id), true);
+    assert.strictEqual(await views(), before + 1);
+    assert.strictEqual(await recordPlay(pool, A, other[0].id), true);
+    assert.strictEqual(await recordPlay(pool, A, first[3].id), 'locked');
+    assert.strictEqual(await recordPlay(pool, A, 999999999), 'not_found');
+    let history = await listWatchHistory(pool, A);
+    assert.deepStrictEqual(history.map((h) => h.episodeId), [other[0].id, first[0].id]);
+
+    // Playing again moves it to the top, keeps the saved position and adds no view.
+    await saveProgress(pool, A, first[0].id, 42, false);
+    await saveProgress(pool, A, other[0].id, 10, false);
+    assert.strictEqual(await recordPlay(pool, A, first[0].id), true);
+    assert.strictEqual(await views(), before + 1);
+    history = await listWatchHistory(pool, A);
+    assert.deepStrictEqual(history.map((h) => h.episodeId), [first[0].id, other[0].id]);
+    assert.strictEqual(history[0].positionSeconds, 42);
+    assert.strictEqual(history[0].seriesSlug, DEMO_SERIES[0].slug);
+
+    // Over HTTP: own history only; guests are asked to make an account.
+    const post = (p: string, user?: number) =>
+      fetch(base + p, { method: 'POST', headers: user ? { 'x-test-user': String(user) } : {} });
+    assert.strictEqual((await post(`/api/me/watch-history/${other[1].id}/play`, B)).status, 200);
+    assert.strictEqual((await post(`/api/me/watch-history/${first[3].id}/play`, B)).status, 403);
+    assert.strictEqual((await post('/api/me/watch-history/999999999/play', B)).status, 404);
+    const guest = await post(`/api/me/watch-history/${other[1].id}/play`);
+    assert.deepStrictEqual(await guest.json(), { error: 'account_required', action: 'keep a watch history' });
+    const mine = await (await fetch(base + '/api/me/watch-history', { headers: { 'x-test-user': String(B) } })).json() as any;
+    assert.deepStrictEqual(mine.history.map((h: any) => h.episodeId), [other[1].id]);
+    assert.strictEqual((await listWatchHistory(pool, A)).length, 2);
+  } finally {
     server.close();
     await pool.end();
   }

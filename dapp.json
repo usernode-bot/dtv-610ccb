@@ -1,6 +1,7 @@
 {
   "description": "Watch movies and dramas together with the group",
   "icon": {
+    "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
   "secrets": [],
@@ -34,6 +35,19 @@
       ]
     },
     {
+      "id": "series.detail-page",
+      "name": "Series detail page shows Watch now and related series",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=related-series] [data-testid=series-tile]",
+      "expectText": "Watch now",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
       "id": "onboarding.genres",
       "name": "Genre onboarding offers genres to pick",
       "path": "/#/onboarding",
@@ -52,6 +66,19 @@
       "expectSelector": "[data-testid=episode-list] [data-testid=unlock-button]"
     },
     {
+      "id": "mylist.following",
+      "name": "My List opens on the Following tab",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=my-list-tab-following][aria-current=page]",
+      "expectText": "My List",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
       "id": "player.watch",
       "name": "Player opens a free episode",
       "path": "/#/watch/bakery-on-maple-street/1",
@@ -68,6 +95,16 @@
       "path": "/#/watch/bakery-on-maple-street/4",
       "expectSelector": "[data-testid=player-slide][data-state=locked] [data-testid=unlock-button]",
       "expectText": "is locked"
+    },
+    {
+      "name": "My List watch history tab",
+      "path": "/my-list/history",
+      "expectSelector": "[data-testid=my-list-tab-history][aria-current=page]"
+    },
+    {
+      "name": "Browse links to My List",
+      "path": "/",
+      "expectSelector": "[data-testid=my-list-link]"
     }
   ],
   "private_tables": [

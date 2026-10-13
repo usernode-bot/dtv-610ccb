@@ -4,7 +4,7 @@ import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
 import {
-  getEpisode, getSeries, getWatchPayload, listEpisodes, listGenres, listSeries, setFollow,
+  getEpisode, getSeries, getWatchPayload, listEpisodes, listGenres, listRelated, listSeries, setFollow,
 } from '../../lib/catalogue';
 import { ensureProfile, unlockEpisode } from '../../lib/me';
 
@@ -24,6 +24,12 @@ export function catalogueRouter(pool: Pool, opts: { isStaging: boolean }): expre
     const series = await getSeries(pool, String(req.params.slug), userId(req));
     if (!series) return void res.status(404).json({ error: 'not_found' });
     res.json({ demo: opts.isStaging, series });
+  }));
+
+  router.get('/series/:slug/related', wrap(async (req, res) => {
+    const series = await listRelated(pool, String(req.params.slug), userId(req));
+    if (!series) return void res.status(404).json({ error: 'not_found' });
+    res.json({ series });
   }));
 
   router.get('/series/:slug/episodes', wrap(async (req, res) => {

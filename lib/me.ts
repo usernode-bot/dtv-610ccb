@@ -152,14 +152,51 @@ export async function saveProgress(
 ): Promise<boolean> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (user_id, episode_id) DO UPDATE
        SET position_seconds = EXCLUDED.position_seconds,
            completed = EXCLUDED.completed,
-           updated_at = NOW()`,
+           updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`,
     [userId, episodeId, positionSeconds, completed]);
+  // The first time a person starts an episode counts as one view of its series.
+  if (rows[0].inserted) {
+    await pool.query(
+      `UPDATE series SET view_count = view_count + 1
+        WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
+  }
+  return true;
+}
+
+/**
+ * Record that the person opened an episode to play it: a history row at
+ * position 0 the first time, otherwise only moves it to the top of their
+ * history (their saved position is kept). A locked episode they have not
+ * unlocked is not recorded. The profile must exist (ensureProfile first).
+ */
+export async function recordPlay(
+  pool: Pool, userId: number, episodeId: number,
+): Promise<true | 'not_found' | 'locked'> {
+  const ep = await pool.query(
+    `SELECT e.coin_price,
+            EXISTS (SELECT 1 FROM unlocked_episodes u
+                     WHERE u.user_id = $2 AND u.episode_id = e.id) AS unlocked
+       FROM episodes e WHERE e.id = $1`, [episodeId, userId]);
+  if (!ep.rows.length) return 'not_found';
+  if (ep.rows[0].coin_price > 0 && !ep.rows[0].unlocked) return 'locked';
+  const { rows } = await pool.query(
+    `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
+     VALUES ($1, $2, 0, false)
+     ON CONFLICT (user_id, episode_id) DO UPDATE SET updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`, [userId, episodeId]);
+  // Same rule as saveProgress: the first start counts as one view.
+  if (rows[0].inserted) {
+    await pool.query(
+      `UPDATE series SET view_count = view_count + 1
+        WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
+  }
   return true;
 }
 

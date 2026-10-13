@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <!-- Dtv featured icon, dark: the app-icon mark in yellow on black. -->
+  <rect width="1280" height="720" fill="#000000"/>
+  <g transform="translate(320 76) scale(0.625)">
+    <g transform="rotate(-8 192 312)">
+      <rect x="192" y="208" width="640" height="104" rx="28" fill="#FFEE6F"/>
+      <polygon points="300,208 380,208 330,312 250,312" fill="#000000"/>
+      <polygon points="480,208 560,208 510,312 430,312" fill="#000000"/>
+      <polygon points="660,208 740,208 690,312 610,312" fill="#000000"/>
+    </g>
+    <rect x="192" y="344" width="640" height="448" rx="96" fill="#FFEE6F"/>
+    <rect x="256" y="408" width="512" height="320" rx="56" fill="#000000"/>
+    <polygon points="464,488 464,648 608,568" fill="#FFEE6F"/>
+  </g>
+</svg>

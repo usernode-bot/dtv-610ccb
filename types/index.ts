@@ -36,9 +36,23 @@ export interface EpisodeItem {
   subtitlesUrl: string | null;
 }
 
+/** An episode with the viewer's own progress (always empty for a guest). */
+export interface EpisodeWithProgress extends EpisodeItem {
+  /** Seconds watched, or null when the viewer has not started it. */
+  positionSeconds: number | null;
+  watched: boolean;
+}
+
 export interface SeriesDetail extends SeriesSummary {
   synopsis: string;
-  episodes: EpisodeItem[];
+  viewCount: number;
+  episodes: EpisodeWithProgress[];
+  /**
+   * Where "Continue" goes: the episode watched most recently when it is not
+   * finished (resume true), else the one after it. Null with no history, or
+   * when the last episode watched was the final one.
+   */
+  continueEpisode: { id: number; number: number; resume: boolean } | null;
 }
 
 /** Everything the player needs to open one episode: its series and the whole series as the swipe feed. */
