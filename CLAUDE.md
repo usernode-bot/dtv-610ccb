@@ -114,6 +114,8 @@ change follows it, and updates it when a request changes the look on purpose.
 
 - **Palette:** accent: teal; neutrals: warm greys (the kit defaults in `styles/tailwind-input.css`)
 - **Signature element:** series covers are tinted tiles with the title's initial until real artwork exists (`cover_url`)
+- **Layout:** the page shell is wide (`max-w-6xl`), not a narrow column. Every poster grid (browse, My List following, related series) shares the `POSTER_GRID` literal in `public/js/app.js`: 2 columns on a phone, 3 on a large phone or small tablet, 4 on a tablet, 5 on a laptop, 6 on a wide screen. Detail and history screens keep readable widths (`max-w-prose` synopsis, `sm:max-w-md` action row, `max-w-2xl` history list); the episode grid is 5/8/10 columns across the same ladder.
+- **Header:** a sticky "Dtv" bar (`#app-header` in `public/index.html`) runs across the top of every screen, with a back chevron at its left edge on every screen below browse (set per route via `setHeader`; `null` on browse). It never holds an exit control: the X close button and the URL hint are the Homeroom frame's own, and leaving the app is the frame's job.
 - **Onboarding is always dark:** the genre onboarding layer carries the `dark`
   class itself, so it keeps its cinematic dark look in both themes. Every other
   screen follows the viewer's theme.
