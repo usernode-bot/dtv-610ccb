@@ -104,8 +104,13 @@ authenticated request, a genre onboarding (pick 3 or more, saved to
 `profiles.favorite_genres`) shown until done, and coin unlocks. Guests browse
 and see free episodes; follow, unlock and saving genres answer 401
 `account_required` with an `action`. Episodes are
-free (`coin_price` 0) or locked behind coins; the player, payments and ads come
-later. Content must stay wholesome and neutral (rated None).
+free (`coin_price` 0) or locked behind coins. Phase 5 adds the full-screen
+vertical player at `#/watch/<episodeId>` (`public/js/player.js`): swipe between
+the episodes of a series, progress saved to `watch_history` every 5 s and
+resumed, and a lock card whose `openUnlockSheet` is the hook Phase 6 replaces
+with the unlock sheet. Keep the player to three mounted `<video>` elements and
+tear every stream, listener and timer down on swipe and close. Payments and ads
+come later. Content must stay wholesome and neutral (rated None).
 
 ## Design
 
@@ -117,6 +122,8 @@ change follows it, and updates it when a request changes the look on purpose.
 - **Onboarding is always dark:** the genre onboarding layer carries the `dark`
   class itself, so it keeps its cinematic dark look in both themes. Every other
   screen follows the viewer's theme.
+- **The player is always dark too:** its layer carries `dark`, like onboarding.
+  Its round icon buttons are `btn-icon` (in `styles/tailwind-input.css`).
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
 

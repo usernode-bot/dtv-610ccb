@@ -69,6 +69,8 @@ const STATEMENTS: string[] = [
      UNIQUE (series_id, number)
    )`,
   `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS video_url TEXT`,
+  // Optional WebVTT subtitles for the episode, shown by the player's CC toggle.
+  `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS subtitles_url TEXT`,
   `CREATE INDEX IF NOT EXISTS series_genre_idx ON series (genre_id)`,
 
   // Who follows which series. user_id is the platform user id from the token.

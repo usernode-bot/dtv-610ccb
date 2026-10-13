@@ -126,3 +126,26 @@
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
   }
 }
+
+/* ── Player ───────────────────────────────────────────────────────────────
+ * The full-screen player's own pieces (public/js/player.js). The kit has no
+ * round icon button or safe-area padding, so they live here, on the tokens.
+ * Safe-area values come from the bridge's --un-safe-inset-* properties:
+ * env() alone is 0 inside the app frame.
+ */
+@layer components {
+  /* Round 44 px icon button over the video: back, mute, subtitles. */
+  .btn-icon {
+    @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ground/60 text-fg
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus;
+  }
+  .player-top {
+    padding-top: calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 0.75rem);
+  }
+  .player-top-strip {
+    top: calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 4rem);
+  }
+  .player-bottom {
+    padding-bottom: calc(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.5rem);
+  }
+}

@@ -7,8 +7,10 @@ import express from 'express';
 import type { AddressInfo } from 'net';
 import { Pool } from 'pg';
 import { migrate } from '../lib/schema';
-import { DEMO_SERIES, EPISODES_PER_SERIES, seedDemoCatalogue } from '../lib/seed';
-import { getSeries, listEpisodes, listGenres, listRelated, listSeries, setFollow } from '../lib/catalogue';
+import { DEMO_SERIES, DEMO_SUBTITLES, EPISODES_PER_SERIES, seedDemoCatalogue } from '../lib/seed';
+import {
+  getSeries, getWatchPayload, listEpisodes, listGenres, listRelated, listSeries, setFollow,
+} from '../lib/catalogue';
 import {
   ensureProfile, listFollowed, listWatchHistory, minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress,
   unlockEpisode,
@@ -21,6 +23,8 @@ const url = process.env.DATABASE_URL;
 const opts = { skip: url ? false : 'DATABASE_URL not set' };
 const A = 987654321;
 const B = 987654322;
+const C = 987654323;
+const D = 987654324;
 
 test('schema is re-runnable and the seed is idempotent: 5 demo series x 20 episodes', opts, async () => {
   const pool = new Pool({ connectionString: url });
@@ -285,6 +289,92 @@ test('routes: profile is created on first request; guests get account_required w
     const freeEp = await (await send(`/api/episodes/${eps.episodes[0].id}`, 'GET')).json() as any;
     assert.ok(freeEp.episode.videoUrl);
   } finally {
+    server.close();
+    await pool.end();
+  }
+});
+
+test('player: /api/watch gives the series as a feed, hides locked streams and resumes per person', opts, async () => {
+  const pool = new Pool({ connectionString: url });
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    const id = req.headers['x-test-user'];
+    if (id) req.user = { id: String(id), username: 'staging-test-' + id, usernode_pubkey: null, locale: null, pur: 'iframe' };
+    next();
+  });
+  app.use('/api/me', meRouter(pool));
+  app.use('/api', catalogueRouter(pool, { isStaging: true }));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    await migrate(pool);
+    await seedDemoCatalogue(pool);
+    const bakery = DEMO_SERIES[0];
+    // Its own two people, removed again at the end, so other tests keep fresh profiles.
+    await pool.query('DELETE FROM profiles WHERE id IN ($1, $2)', [C, D]);
+
+    // A real subtitles value survives a re-seed; demo rows get the demo file.
+    const third = await pool.query(
+      `SELECT e.id FROM episodes e JOIN series s ON s.id = e.series_id WHERE s.slug = $1 AND e.number = 3`, [bakery.slug]);
+    await pool.query(`UPDATE episodes SET subtitles_url = '/demo/kept.vtt' WHERE id = $1`, [third.rows[0].id]);
+    await seedDemoCatalogue(pool);
+    const kept = await pool.query('SELECT subtitles_url FROM episodes WHERE id = $1', [third.rows[0].id]);
+    assert.strictEqual(kept.rows[0].subtitles_url, '/demo/kept.vtt');
+    await pool.query('UPDATE episodes SET subtitles_url = $2 WHERE id = $1', [third.rows[0].id, DEMO_SUBTITLES]);
+
+    const eps = (await listEpisodes(pool, bakery.slug, null))!;
+    const first = eps[0];
+    const locked = eps[bakery.freeCount];
+    const get = (p: string, user?: number) =>
+      fetch(base + p, { headers: user ? { 'x-test-user': String(user) } : {} });
+
+    // Guest: the whole series in order, locked items without stream or subtitles, no resume.
+    const guest = await get(`/api/watch/${eps[1].id}`);
+    assert.strictEqual(guest.status, 200);
+    const g = await guest.json() as any;
+    assert.strictEqual(g.episode.id, eps[1].id);
+    assert.strictEqual(g.series.slug, bakery.slug);
+    assert.strictEqual(g.series.title, bakery.title);
+    assert.deepStrictEqual(g.playlist.map((e: any) => e.number), eps.map((e) => e.number));
+    assert.ok(g.playlist.every((e: any) => e.seriesId === first.seriesId));
+    assert.strictEqual(g.playlist[0].subtitlesUrl, DEMO_SUBTITLES);
+    for (const e of g.playlist.filter((x: any) => x.state === 'locked')) {
+      assert.strictEqual(e.videoUrl, null);
+      assert.strictEqual(e.subtitlesUrl, null);
+    }
+    assert.strictEqual(g.playlist[bakery.freeCount].state, 'locked');
+    assert.strictEqual(g.resume, null);
+
+    // Signed in: own position only.
+    const put = (user: number, id: number, positionSeconds: number, completed = false) =>
+      fetch(`${base}/api/me/watch-history/${id}`, {
+        method: 'PUT', headers: { 'x-test-user': String(user), 'content-type': 'application/json' },
+        body: JSON.stringify({ positionSeconds, completed }),
+      });
+    assert.strictEqual((await get(`/api/watch/${first.id}`, C).then((r) => r.json()) as any).resume, null);
+    assert.strictEqual((await put(C, first.id, 83)).status, 200);
+    const a = await get(`/api/watch/${first.id}`, C).then((r) => r.json()) as any;
+    assert.deepStrictEqual(a.resume, { positionSeconds: 83, completed: false });
+    const b = await get(`/api/watch/${first.id}`, D).then((r) => r.json()) as any;
+    assert.strictEqual(b.resume, null);
+    await put(C, first.id, 140, true);
+    assert.deepStrictEqual((await getWatchPayload(pool, first.id, C))!.resume, { positionSeconds: 140, completed: true });
+
+    // Unlocking reveals the stream and subtitles to that person only.
+    await pool.query('UPDATE profiles SET coin_balance = 100 WHERE id = $1', [C]);
+    const unlock = await fetch(`${base}/api/episodes/${locked.id}/unlock`, { method: 'POST', headers: { 'x-test-user': String(C) } });
+    assert.strictEqual(unlock.status, 200);
+    const after = (await getWatchPayload(pool, locked.id, C))!;
+    assert.strictEqual(after.episode.state, 'unlocked');
+    assert.ok(after.episode.videoUrl);
+    assert.strictEqual(after.episode.subtitlesUrl, DEMO_SUBTITLES);
+    assert.strictEqual((await getWatchPayload(pool, locked.id, D))!.episode.subtitlesUrl, null);
+
+    assert.strictEqual((await get('/api/watch/0')).status, 404);
+    assert.strictEqual((await get('/api/watch/abc')).status, 404);
+  } finally {
+    await pool.query('DELETE FROM profiles WHERE id IN ($1, $2)', [C, D]).catch(() => {});
     server.close();
     await pool.end();
   }

@@ -1,11 +1,12 @@
-// Dtv front end: a series browse screen, a series detail screen, the watch
-// screen, My List and the genre onboarding. Path routes: "/" (browse),
-// "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
-// (followed series) and "/my-list/history" (watch history). Older "#/series/<slug>" links are
-// moved to the path form. Links marked data-nav navigate in place. Onboarding
-// is a full-screen layer over the page, shown on "#/onboarding" and, for a
-// signed-in person who has not picked genres yet, on every route until they
-// do. Everything is
+// Dtv front end: a series browse screen, a series detail screen, My List, the
+// genre onboarding and the player (public/js/player.js). Path routes: "/"
+// (browse), "/series/<slug>" (detail), "/my-list" (followed series) and
+// "/my-list/history" (watch history). The player is a hash route,
+// "#/watch/<episodeId>" or "#/watch/<slug>/<number>"; a "/watch/<episodeId>"
+// path is moved to it. Older "#/series/<slug>" links are moved to the path
+// form. Links marked data-nav navigate in place. Onboarding is a full-screen
+// layer over the page, shown on "#/onboarding" and, for a signed-in person who
+// has not picked genres yet, on every route until they do. Everything is
 // built with DOM calls and textContent, so catalogue text is never parsed as
 // HTML. Class names are whole literals so the Tailwind build can see them.
 //
@@ -38,8 +39,11 @@
     } catch (_) {}
   }
 
-  /** @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status */
-  function api(path, method, body) {
+  /**
+   * @param {{keepalive?: boolean}} [extra] fetch options (keepalive lets a save finish as the page closes)
+   * @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status
+   */
+  function api(path, method, body, extra) {
     var headers = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers['x-usernode-token'] = token;
@@ -48,6 +52,7 @@
     }
     var init = { method: method || 'GET', headers: headers };
     if (body !== undefined) init.body = JSON.stringify(body);
+    if (extra && extra.keepalive) init.keepalive = true;
     return fetch(path, init).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
@@ -237,14 +242,14 @@
   function historyRow(item) {
     var progress = item.completed ? 'Watched'
       : item.positionSeconds > 0 ? 'Stopped at ' + minutes(item.positionSeconds) : 'Started';
-    var a = navLink('/watch/' + item.episodeId, 'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
+    var a = h('a', 'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
       h('span', 'flex min-w-0 flex-1 flex-col', [
         h('span', 'truncate text-body font-semibold', item.seriesTitle),
         h('span', 'truncate text-small text-muted', 'Episode ' + item.episodeNumber + ': ' + item.episodeTitle),
       ]),
       h('span', 'shrink-0 text-small text-muted', progress),
     ]);
-    a.dataset.seriesSlug = item.seriesSlug;
+    a.href = '#/watch/' + item.episodeId;
     return h('li', '', [a]);
   }
 
@@ -444,7 +449,7 @@
         if (e.state === 'locked') {
           openUnlockSheet({ episode: e, series: s, notice: notice, onUnlocked: function () { renderDetail(slug); } });
         } else {
-          navigate('/watch/' + e.id, { seriesSlug: slug });
+          location.hash = '#/watch/' + e.id;
         }
       }
 
@@ -571,68 +576,6 @@
     });
   }
 
-  // ── Watch ─────────────────────────────────────────────────────────────
-  // The player arrives in a later phase; this screen names the episode and
-  // links back so a tap on an episode lands somewhere real.
-  function renderWatch(id) {
-    show(loadingDetail());
-    var fromSlug = history.state && history.state.seriesSlug;
-    var back = fromSlug
-      ? navLink('/series/' + encodeURIComponent(fromSlug), 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Back to series')
-      : navLink('/', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'All series');
-    api('/api/episodes/' + encodeURIComponent(id)).then(function (data) {
-      /** @type {EpisodeItem} */
-      var e = data.episode;
-      var message = h('p', 'text-small text-muted');
-      message.setAttribute('role', 'status');
-      var body;
-      if (e.state === 'locked') {
-        var unlockBtn = h('button', 'btn-primary', [icon('coin'), 'Unlock for ' + plural(e.coinPrice, 'coin', 'coins')]);
-        unlockBtn.type = 'button';
-        unlockBtn.addEventListener('click', function () {
-          openUnlockSheet({
-            episode: e, series: null,
-            notice: function (text) { message.textContent = text; },
-            onUnlocked: function () { renderWatch(id); },
-          });
-        });
-        body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'This episode is locked'),
-          h('p', 'text-body text-muted', 'Unlock it with coins to watch.'),
-          unlockBtn,
-          message,
-        ]);
-      } else {
-        // Opening a playable episode puts it in the person's watch history.
-        if (me && !isGuest()) {
-          api('/api/me/watch-history/' + e.id + '/play', 'POST').catch(function () {});
-        }
-        body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'The player is coming soon'),
-          h('p', 'text-body text-muted', 'Watching episodes arrives in a later update.'),
-        ]);
-      }
-      show(h('div', 'flex flex-col gap-6', [
-        back,
-        h('div', 'flex flex-col gap-1', [
-          h('h1', 'text-title', 'Episode ' + e.number + ': ' + e.title),
-          h('p', 'text-small text-muted', minutes(e.durationSeconds)),
-        ]),
-        body,
-      ]));
-    }).catch(function (err) {
-      if (err.status === 404) {
-        show(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'Episode not found'),
-          h('p', 'text-body text-muted', 'It may have been removed.'),
-          back,
-        ]));
-      } else {
-        show(errorState('Could not load this episode', function () { renderWatch(id); }, back));
-      }
-    });
-  }
-
   // ── Onboarding ────────────────────────────────────────────────────────
   // Always the dark look: the layer carries the "dark" class, so the colour
   // tokens inside it take their dark values whatever the viewer's theme.
@@ -732,6 +675,7 @@
           me.onboarding.required = false;
           closeOnboarding();
           if (location.hash === '#/onboarding') location.hash = '#/';
+          else if (/^#\/watch\//.test(location.hash)) route();
         }).catch(function (err) {
           if (err.status !== 401) message.textContent = 'Could not save your genres. Try again.';
           paintSave();
@@ -764,6 +708,21 @@
   }
 
   // ── Routing ───────────────────────────────────────────────────────────
+  // What the player borrows from this file, so nothing is written twice.
+  var playerContext = {
+    api: api, h: h, cover: cover, lockIcon: lockIcon, minutes: minutes, plural: plural,
+    isGuest: isGuest, askForAccount: askForAccount,
+    canSave: function () { return !!me && me !== 'guest'; },
+  };
+
+  /** The player's route as { id } or { slug, number }, or null for any other route. */
+  function watchRef() {
+    var m = /^#\/watch\/(\d+)$/.exec(location.hash);
+    if (m) return { id: Number(m[1]) };
+    m = /^#\/watch\/([^/]+)\/(\d+)$/.exec(location.hash);
+    return m ? { slug: decodeURIComponent(m[1]), number: Number(m[2]) } : null;
+  }
+
   // The query string (the platform's ?token=, ?un-theme=, ...) is kept on
   // every in-app navigation so a reload still works.
   function navigate(path, state) {
@@ -779,11 +738,26 @@
   });
 
   function route() {
+    var legacyWatch = /^\/watch\/(\d+)\/?$/.exec(location.pathname);
+    if (legacyWatch) history.replaceState(null, '', '/' + location.search + '#/watch/' + legacyWatch[1]);
+    var ref = watchRef();
+    if (ref) {
+      // The player covers the page; onboarding, when due, comes first.
+      if (onboardingDue()) openOnboarding();
+      else {
+        // Opening a playable episode puts it in the person's watch history.
+        if (ref.id && me && !isGuest()) {
+          api('/api/me/watch-history/' + ref.id + '/play', 'POST').catch(function () {});
+        }
+        window.DtvPlayer.open(ref, playerContext);
+      }
+      return;
+    }
+    window.DtvPlayer.close();
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
     if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
-    else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
     else if (/^\/my-list\/history\/?$/.test(location.pathname)) renderMyList('history');
     else renderBrowse();

@@ -176,6 +176,15 @@ app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
+// The player's HLS engine, from the hls.js package (a pinned dependency, not
+// platform infrastructure). The light build: no in-manifest subtitles or DRM,
+// which the player does not use. Public like the rest of the static files.
+const HLS_FILE = path.join(path.dirname(require.resolve('hls.js/package.json')), 'dist', 'hls.light.min.js');
+app.get('/vendor/hls.light.min.js', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(HLS_FILE);
+});
+
 app.use(express.static(PUBLIC_DIR));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
