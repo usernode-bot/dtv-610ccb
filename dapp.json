@@ -1,6 +1,7 @@
 {
   "description": "Watch movies and dramas together with the group",
   "icon": {
+    "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
   "secrets": [],
