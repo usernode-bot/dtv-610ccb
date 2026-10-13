@@ -143,6 +143,10 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
+- App admins (the series manager at `/admin`) are the usernames in the
+  `ADMIN_USERNAMES` secret, checked on the server by `lib/admin.ts`. Viewer
+  queries only ever return `series.is_published` rows.
+
 _(optional — e.g. "all currency values stored as integer cents, not
 floats"; "the `posts` table is append-only"; "avoid adding new
 dependencies"; etc.)_

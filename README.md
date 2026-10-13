@@ -9,6 +9,22 @@ opened, most recent first), plain JS in `public/`. Episodes link to `/watch/<epi
 placeholder until the player lands; locked episodes call `window.dtv.openUnlockSheet`
 (a stub until the unlock sheet lands). There is no player, payment or ad support yet.
 
+## Series manager (admins)
+
+`/admin` lets app admins add, edit, publish/unpublish and delete series, and add episodes in bulk
+(`/admin/series/<id>/episodes`: video URL, duration, subtitle language, free or locked). Admins are the
+usernames in the `ADMIN_USERNAMES` app secret (comma separated; set it in App secrets). Everyone else sees
+"Only Dtv admins can manage series". Viewers only ever see series with `is_published`; series from before
+the manager stay published, a newly added one starts unpublished and needs at least one episode to publish.
+Posters and banners upload through the platform's file storage (`usernode.uploadFile`) and are saved as
+`poster_url` / `banner_url`. Locked episodes cost 15 coins (long) or 3 coins (short). Every field is checked in
+the page and again on the server (`lib/admin.ts`), with a message under each field that fails.
+
+API (admins only, 403 `admin_required` otherwise): `GET|POST /api/admin/series`,
+`GET|PUT|DELETE /api/admin/series/:id`, `PUT /api/admin/series/:id/published`,
+`POST /api/admin/series/:id/episodes`, `DELETE /api/admin/episodes/:id`. A failed check answers
+400 `{ error: 'invalid', fields: { <field>: message } }`.
+
 ## Layout
 
 - `app/`: the Express server (`server.ts`: platform auth, boot, graceful shutdown) and `app/routes/`.
@@ -26,7 +42,7 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 |---|---|---|
 | `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
-| `series` | public | `id`, `slug`, `title`, `original_title` (Hanzi/Hangul), `synopsis`, `description` (read-only alias of `synopsis`), `country` (`china` / `korea`), `format` (`long` / `short`), `genres` (text[]), `genre` (primary label), `genre_id` -> genres, `release_year`, `status` (`ongoing` / `completed`), `poster_url`, `banner_url`, `total_episodes`, `rating` (0-10), `is_featured`, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
+| `series` | public | `id`, `slug`, `title`, `is_published` (viewers see only published), `original_title` (Hanzi/Hangul), `synopsis`, `description` (read-only alias of `synopsis`), `country` (`china` / `korea`), `format` (`long` / `short`), `genres` (text[]), `genre` (primary label), `genre_id` -> genres, `release_year`, `status` (`ongoing` / `completed`), `poster_url`, `banner_url`, `total_episodes`, `rating` (0-10), `is_featured`, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
 | `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `subtitle_langs` (text[], BCP-47), `created_at`; read-only aliases `episode_number` (= `number`), `duration_sec` (= `duration_seconds`), `is_free` (= `coin_price = 0`); unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |

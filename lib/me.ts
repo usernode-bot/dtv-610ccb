@@ -73,7 +73,10 @@ export async function unlockEpisode(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const ep = await client.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
+    const ep = await client.query(
+      `SELECT e.coin_price FROM episodes e
+         JOIN series s ON s.id = e.series_id AND s.is_published
+        WHERE e.id = $1`, [episodeId]);
     if (!ep.rows.length) { await client.query('ROLLBACK'); return 'not_found'; }
     const price: number = ep.rows[0].coin_price;
     const me = await client.query(
@@ -109,7 +112,7 @@ export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSu
             COUNT(e.id)::int AS episode_count,
             COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count
        FROM follows f
-       JOIN series s ON s.id = f.series_id
+       JOIN series s ON s.id = f.series_id AND s.is_published
        LEFT JOIN episodes e ON e.series_id = s.id
       WHERE f.user_id = $1
       GROUP BY s.id, f.created_at

@@ -9,6 +9,7 @@ import { seedDemoCatalogue } from '../lib/seed';
 import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
+import { adminRouter } from './routes/admin';
 import { accountRequired, upsertProfileOnce } from '../lib/auth';
 
 // Compiled to dist/app/server.js, so public/ is two levels up.
@@ -168,6 +169,8 @@ app.use(upsertProfileOnce(pool));
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.
 app.use('/api/me', meRouter(pool));
+// The series manager: admins only (ADMIN_USERNAMES).
+app.use('/api/admin', adminRouter(pool));
 app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 
 // The template ships no favicon file; index.html carries an inline SVG

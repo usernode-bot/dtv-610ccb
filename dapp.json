@@ -4,7 +4,14 @@
     "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
-  "secrets": [],
+  "secrets": [
+    {
+      "key": "ADMIN_USERNAMES",
+      "description": "Homeroom usernames allowed to add, edit, publish and delete series in Dtv's series manager (/admin), separated by commas, e.g. alice, bob. Leave empty and nobody can manage series.",
+      "required": false,
+      "private": false
+    }
+  ],
   "visibility": {
     "build": "public",
     "view": "public"
@@ -87,6 +94,19 @@
       "name": "Browse links to My List",
       "path": "/",
       "expectSelector": "[data-testid=my-list-link]"
+    },
+    {
+      "id": "admin.not-admin",
+      "name": "Series manager refuses a non-admin",
+      "path": "/admin",
+      "expectSelector": "[data-testid=admin-required]",
+      "expectText": "Only Dtv admins can manage series",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
     }
   ],
   "private_tables": [
