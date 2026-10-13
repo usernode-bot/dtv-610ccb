@@ -87,6 +87,9 @@
     play: [['path', { d: 'M7 5l12 7-12 7z' }]],
     check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     share: [['path', { d: 'M12 3v12' }], ['path', { d: 'M7 8l5-5 5 5' }], ['path', { d: 'M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6' }]],
+    film: [['rect', { x: 3, y: 10, width: 18, height: 10, rx: 2 }],
+      ['path', { d: 'M3 10 2.4 6.6 19.1 3.7 19.7 7.1z' }],
+      ['path', { d: 'M7.5 5.7 9 9' }], ['path', { d: 'M12.8 4.8 14.3 8.1' }]],
   };
 
   function icon(name, cls) {
@@ -177,6 +180,9 @@
   }
 
   // ── Browse ────────────────────────────────────────────────────────────
+  // Where a request for a series is filed: this app's page on Homeroom.
+  var REQUEST_URL = 'https://app.onhomeroom.com/#app/dtv-610ccb';
+
   function tile(/** @type {SeriesSummary} */ s) {
     var a = navLink('/series/' + encodeURIComponent(s.slug), 'flex flex-col gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
       cover(s, 'aspect-[3/4] w-full rounded-xl border border-line', 'text-title text-fg'),
@@ -203,8 +209,10 @@
       }
       if (!data.series.length) {
         page.appendChild(h('div', 'state-empty', [
+          h('div', 'mb-2 flex h-20 w-20 items-center justify-center rounded-xl bg-accent/15 text-accent', [icon('film', 'h-10 w-10')]),
           h('h2', 'text-heading', 'No series yet'),
           h('p', 'text-body text-muted', 'New series will appear here as soon as they are added.'),
+          requestLink(),
         ]));
       } else {
         var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
@@ -216,6 +224,16 @@
     }).catch(function () {
       show(errorState('Could not load series', renderBrowse));
     });
+  }
+
+  /** An external link to where requests for this app are filed. Not data-nav, so the in-app click handler leaves it alone. */
+  function requestLink() {
+    var a = h('a', 'btn-primary mt-2', 'Request a series');
+    a.href = REQUEST_URL;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.dataset.testid = 'request-series';
+    return a;
   }
 
   function myListLink() {
