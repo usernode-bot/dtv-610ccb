@@ -96,6 +96,7 @@
     play: [['path', { d: 'M7 5l12 7-12 7z' }]],
     check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     share: [['path', { d: 'M12 3v12' }], ['path', { d: 'M7 8l5-5 5 5' }], ['path', { d: 'M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6' }]],
+    bookmark: [['path', { d: 'M6 4h12v17l-6-4-6 4z' }]],
     film: [['rect', { x: 3, y: 10, width: 18, height: 10, rx: 2 }],
       ['path', { d: 'M3 10 2.4 6.6 19.1 3.7 19.7 7.1z' }],
       ['path', { d: 'M7.5 5.7 9 9' }], ['path', { d: 'M12.8 4.8 14.3 8.1' }]],
@@ -271,11 +272,16 @@
   function renderBrowse() {
     setTitle('');
     show(loadingBrowse());
+    // The follow count fills the header button when it arrives; it never
+    // blocks or fails the catalogue itself.
+    var followsReq = isGuest() ? null : api('/api/me/follows');
     api('/api/series').then(function (data) {
       var page = h('div', 'flex flex-col gap-4');
+      var link = myListLink();
+      if (followsReq) followsReq.then(function (d) { link.setCount(d.series.length); }).catch(function () {});
       page.appendChild(h('div', 'flex items-center justify-between gap-4', [
         h('h1', 'text-title', t('series')),
-        h('div', 'flex items-center gap-4', [adminLink(), myListLink()]),
+        h('div', 'flex items-center gap-4', [adminLink(), link]),
       ]));
       if (data.demo) {
         page.appendChild(h('p', 'text-small text-muted', t('stagingDemo')));
@@ -347,9 +353,15 @@
     return a;
   }
 
+  // The My List entry on the browse header: a quiet bordered pill matching the
+  // unselected My List tabs, with a bookmark icon and (once known) the number
+  // of series the person follows. Guests and failed counts just see "My List".
   function myListLink() {
-    var a = navLink('/my-list', 'inline-flex min-h-11 items-center text-body font-medium text-accent', t('myList'));
+    var label = h('span', '', t('myList'));
+    label.dataset.testid = 'my-list-count-label';
+    var a = navLink('/my-list', 'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-line bg-surface px-4 text-body font-medium text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('bookmark'), label]);
     a.dataset.testid = 'my-list-link';
+    a.setCount = function (n) { label.textContent = t('myList') + ' (' + n + ')'; };
     return a;
   }
 
