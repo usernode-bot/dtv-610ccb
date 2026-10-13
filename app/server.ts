@@ -178,6 +178,11 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 app.use(express.static(PUBLIC_DIR));
 
+// The HLS player for browsers that cannot play HLS natively (most besides
+// Safari). The watch screen loads it only when it needs it.
+const HLS_JS = require.resolve('hls.js/dist/hls.min.js');
+app.get('/vendor/hls.min.js', (_req, res) => res.sendFile(HLS_JS));
+
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
 // are sent to the platform's chromeless view of this app, where the shell

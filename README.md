@@ -1,13 +1,17 @@
 # Dtv
 
 Watch movies and dramas together with the group. Express + TypeScript server
-with Postgres. The catalogue: a series browse screen (`/`) and a series detail
+with Postgres. The catalogue: a series browse screen (`/`: featured hero, shelves for New
+releases, Trending, Chinese short dramas and Korean long dramas, country and format chips,
+search on title and original title, a genre filter, and a 2/4/6-column poster grid; filters
+live in the address as `?country=cn|kr&format=long|short&genre=<slug>&q=<text>`) and a series detail
 page (`/series/<slug>`: cover, genre, expandable description, episode and view
 counts, Watch now / Continue, follow, share, a 5-per-row episode grid and related
 series), and My List (`/my-list`: the series you follow, and `/my-list/history`: episodes you
-opened, most recent first), plain JS in `public/`. Episodes link to `/watch/<episodeId>`, a
-placeholder until the player lands; locked episodes call `window.dtv.openUnlockSheet`
-(a stub until the unlock sheet lands). There is no player, payment or ad support yet.
+opened, most recent first), plain JS in `public/`. Episodes link to `/watch/<episodeId>`, which plays the
+episode's HLS stream (natively where the browser can, else with hls.js from `/vendor/hls.min.js`)
+and saves progress; locked episodes call `window.dtv.openUnlockSheet`
+(a stub until the unlock sheet lands). There is no payment or ad support yet.
 
 ## Layout
 
@@ -26,7 +30,7 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 |---|---|---|
 | `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
-| `series` | public | `id`, `slug`, `title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
+| `series` | public | `id`, `slug`, `title`, `original_title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `country` (ISO code, e.g. `CN`, `KR`), `format` (`long` / `short`), `rating` (0-10), `is_featured`, `released_on`, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
 | `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `created_at`; unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
@@ -49,7 +53,7 @@ Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/serie
 
 ## Demo data and the seed
 
-`lib/seed.ts` adds 5 demo series x 20 episodes (series flagged `is_demo`, placeholder tinted covers,
+`lib/seed.ts` adds 11 demo series (Chinese and Korean, long and short, three featured) x 20 episodes (series flagged `is_demo`, placeholder tinted covers,
 Apple's public HLS test streams, the first few episodes free). It is idempotent. It runs automatically
 on every **staging** start and never in production. To run it by hand:
 

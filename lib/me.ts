@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import type {
   CoinTransaction, EpisodeItem, Profile, SeriesSummary, WatchHistoryItem,
 } from '../types';
+import { toSummary } from './catalogue';
 
 const PROFILE_COLUMNS = 'id, username, avatar_url, coin_balance, favorite_genres, onboarded_at, created_at';
 
@@ -105,7 +106,11 @@ export async function unlockEpisode(
 /** Series this person follows, most recently followed first. */
 export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSummary[]> {
   const { rows } = await pool.query(
-    `SELECT s.id, s.slug, s.title, s.genre, s.cover_url, s.cover_tone, s.is_demo,
+    `SELECT s.id, s.slug, s.title, s.synopsis, s.genre, s.cover_url, s.cover_tone, s.is_demo,
+            s.view_count, s.original_title, s.country, s.format, s.rating::float8 AS rating,
+            s.is_featured, to_char(s.released_on, 'YYYY-MM-DD') AS released_on,
+            (SELECT g.slug FROM genres g WHERE g.id = s.genre_id) AS genre_slug,
+            TRUE AS following,
             COUNT(e.id)::int AS episode_count,
             COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count
        FROM follows f
@@ -114,11 +119,7 @@ export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSu
       WHERE f.user_id = $1
       GROUP BY s.id, f.created_at
       ORDER BY f.created_at DESC`, [userId]);
-  return rows.map((r) => ({
-    id: r.id, slug: r.slug, title: r.title, genre: r.genre, coverUrl: r.cover_url,
-    coverTone: r.cover_tone, isDemo: r.is_demo, episodeCount: r.episode_count,
-    freeEpisodeCount: r.free_episode_count, following: true,
-  }));
+  return rows.map(toSummary);
 }
 
 export async function listWatchHistory(pool: Pool, userId: number): Promise<WatchHistoryItem[]> {

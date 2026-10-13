@@ -101,11 +101,15 @@ Watch movies and dramas together with the group
 
 Phase 1 ships the catalogue (browse series, series detail, follow). Phase 2 adds Homeroom sign-in: a `profiles` row per person on their first
 authenticated request, a genre onboarding (pick 3 or more, saved to
-`profiles.favorite_genres`) shown until done, and coin unlocks. Guests browse
+`profiles.favorite_genres`) shown until done, and coin unlocks. Browse adds a featured hero, shelves (New releases, Trending, Chinese
+short dramas, Korean long dramas), country/format chips, search on title and original title,
+and a genre filter; series carry `country`, `format` (long/short), `rating`, `is_featured`,
+`original_title` and `released_on`. "My List" is the series a person follows: a card's
+bookmark and the detail screen's Follow are the same switch. Guests browse
 and see free episodes; follow, unlock and saving genres answer 401
 `account_required` with an `action`. Episodes are
-free (`coin_price` 0) or locked behind coins; the player, payments and ads come
-later. Content must stay wholesome and neutral (rated None).
+free (`coin_price` 0) or locked behind coins; the watch screen plays the HLS stream
+(natively, else with hls.js served at `/vendor/hls.min.js`). Payments and ads come later. Content must stay wholesome and neutral (rated None).
 
 ## Design
 
@@ -114,6 +118,12 @@ change follows it, and updates it when a request changes the look on purpose.
 
 - **Palette:** accent: teal; neutrals: warm greys (the kit defaults in `styles/tailwind-input.css`)
 - **Signature element:** series covers are tinted tiles with the title's initial until real artwork exists (`cover_url`)
+- **Posters:** short dramas are vertical 9:16 posters, long dramas 2:3. A card carries a
+  Short/Long badge (top left), the rating (bottom left) and the My List bookmark (top right).
+- **Country flags** are small inline SVGs in the flags' own colours (`flag()` in
+  `public/js/app.js`, CN and KR only). They are the one place raw colour values are allowed.
+- **Browse is wide:** the browse screen uses `max-w-6xl` for the 2/4/6-column poster grid;
+  every other screen stays `max-w-2xl`.
 - **Onboarding is always dark:** the genre onboarding layer carries the `dark`
   class itself, so it keeps its cinematic dark look in both themes. Every other
   screen follows the viewer's theme.

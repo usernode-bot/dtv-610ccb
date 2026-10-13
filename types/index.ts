@@ -10,15 +10,33 @@ export interface SeriesSummary {
   id: number;
   slug: string;
   title: string;
+  synopsis: string;
   genre: string;
   coverUrl: string | null;
   coverTone: number;
   isDemo: boolean;
+  /** Genre slug, or null when the series has no linked genre. */
+  genreSlug: string | null;
+  /** The title in its original language ('' when it has none). */
+  originalTitle: string;
+  /** ISO 3166 country code (e.g. 'CN', 'KR'), or null. */
+  country: string | null;
+  /** Short dramas are vertical (9:16 posters); long dramas use 2:3. */
+  format: SeriesFormat;
+  /** 0 to 10, or null when not rated. */
+  rating: number | null;
+  isFeatured: boolean;
+  /** YYYY-MM-DD, or null. */
+  releasedOn: string | null;
+  /** People who started an episode (see series.view_count). */
+  viewCount: number;
   episodeCount: number;
   freeEpisodeCount: number;
   /** Always false for a guest. */
   following: boolean;
 }
+
+export type SeriesFormat = 'long' | 'short';
 
 export type EpisodeState = 'free' | 'unlocked' | 'locked';
 
@@ -42,8 +60,6 @@ export interface EpisodeWithProgress extends EpisodeItem {
 }
 
 export interface SeriesDetail extends SeriesSummary {
-  synopsis: string;
-  viewCount: number;
   episodes: EpisodeWithProgress[];
   /**
    * Where "Continue" goes: the episode watched most recently when it is not

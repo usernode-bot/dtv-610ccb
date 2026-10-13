@@ -9,7 +9,9 @@ import type {
 
 const SUMMARY_SQL = `
   SELECT s.id, s.slug, s.title, s.synopsis, s.genre, s.cover_url, s.cover_tone, s.is_demo,
-         s.view_count,
+         s.view_count, s.original_title, s.country, s.format, s.rating::float8 AS rating,
+         s.is_featured, to_char(s.released_on, 'YYYY-MM-DD') AS released_on,
+         (SELECT g.slug FROM genres g WHERE g.id = s.genre_id) AS genre_slug,
          COUNT(e.id)::int AS episode_count,
          COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count,
          EXISTS (SELECT 1 FROM follows f
@@ -24,15 +26,25 @@ const EPISODE_SQL = `
                   WHERE u.episode_id = e.id AND u.user_id = $1) AS unlocked
     FROM episodes e`;
 
-function toSummary(r: any): SeriesSummary {
+/** A series row (SUMMARY_SQL's columns) as the API shape. */
+export function toSummary(r: any): SeriesSummary {
   return {
     id: r.id,
     slug: r.slug,
     title: r.title,
+    synopsis: r.synopsis ?? '',
     genre: r.genre,
     coverUrl: r.cover_url,
     coverTone: r.cover_tone,
     isDemo: r.is_demo,
+    genreSlug: r.genre_slug ?? null,
+    originalTitle: r.original_title ?? '',
+    country: r.country ?? null,
+    format: r.format === 'short' ? 'short' : 'long',
+    rating: r.rating ?? null,
+    isFeatured: r.is_featured === true,
+    releasedOn: r.released_on ?? null,
+    viewCount: r.view_count ?? 0,
     episodeCount: r.episode_count,
     freeEpisodeCount: r.free_episode_count,
     following: r.following,
@@ -126,7 +138,7 @@ export async function getSeries(
   }
 
   return {
-    ...toSummary(r), synopsis: r.synopsis, viewCount: r.view_count, episodes, continueEpisode,
+    ...toSummary(r), episodes, continueEpisode,
   };
 }
 
