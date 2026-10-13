@@ -14,13 +14,34 @@
       "id": "series.browse",
       "name": "Series browse grid renders",
       "path": "/",
-      "expectSelector": "[data-testid=series-grid]",
+      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile]",
       "visual": true,
       "impact": [
         "public/**",
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "name": "App header shows the Dtv title",
+      "path": "/",
+      "expectSelector": "[data-testid=app-header]",
+      "expectText": "Dtv"
+    },
+    {
+      "id": "header.back",
+      "name": "Series detail header has a back control",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back][href='/']",
+      "visual": true,
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
+      "name": "My List header has a back control",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back]"
     },
     {
       "id": "series.detail",

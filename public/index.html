@@ -108,7 +108,14 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main id="app" class="mx-auto max-w-2xl px-4 py-6"></main>
+  <!-- Painted before any JS runs, so the Dtv name and the way back are there
+       from the first frame; app.js swaps the back control per screen. -->
+  <header id="app-header" data-testid="app-header" class="sticky top-0 z-10 border-b border-line bg-ground">
+    <div id="app-header-bar" class="mx-auto flex min-h-14 max-w-6xl items-center gap-1 px-2 sm:px-4">
+      <span class="px-2 text-heading">Dtv</span>
+    </div>
+  </header>
+  <main id="app" class="mx-auto max-w-6xl px-4 py-6 sm:px-6"></main>
   <script src="/js/app.js"></script>
 </body>
 </html>

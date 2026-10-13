@@ -7,7 +7,10 @@
 // signed-in person who has not picked genres yet, on every route until they
 // do. Everything is
 // built with DOM calls and textContent, so catalogue text is never parsed as
-// HTML. Class names are whole literals so the Tailwind build can see them.
+// HTML. A sticky "Dtv" header sits above every screen and holds the back
+// chevron for the current screen (setHeader per route); leaving the app is
+// the Homeroom frame's job, not the header's. Class names are whole literals
+// so the Tailwind build can see them.
 //
 // @typedef {{id:number, slug:string, title:string, genre:string, coverUrl:string|null,
 //   coverTone:number, episodeCount:number, freeEpisodeCount:number, following:boolean}} SeriesSummary
@@ -87,6 +90,7 @@
     play: [['path', { d: 'M7 5l12 7-12 7z' }]],
     check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     share: [['path', { d: 'M12 3v12' }], ['path', { d: 'M7 8l5-5 5 5' }], ['path', { d: 'M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6' }]],
+    back: [['path', { d: 'M15 18l-6-6 6-6' }]],
   };
 
   function icon(name, cls) {
@@ -135,27 +139,59 @@
     return box;
   }
 
-  function show(node) {
-    root.replaceChildren(node);
-    window.scrollTo(0, 0);
-  }
+  // Poster grids: 2 columns on a phone, 3 on a large phone or small tablet,
+  // 4 on a tablet, 5 on a laptop and 6 on a wide screen. A whole literal, so
+  // the Tailwind build sees it. Breakpoints measure the Dtv frame.
+  var POSTER_GRID = 'grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
 
-  // ── States ────────────────────────────────────────────────────────────
-  function loadingBrowse() {
-    var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
-    for (var i = 0; i < 6; i++) {
+  /** n poster placeholders in the shared grid, for a loading state. */
+  function posterSkeleton(n) {
+    var grid = h('div', POSTER_GRID);
+    for (var i = 0; i < n; i++) {
       grid.appendChild(h('div', 'flex flex-col gap-2', [
         h('div', 'skeleton aspect-[3/4] w-full'),
         h('div', 'skeleton h-5 w-3/4'),
         h('div', 'skeleton h-4 w-1/2'),
       ]));
     }
-    return h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), grid]);
+    return grid;
+  }
+
+  // ── App header ────────────────────────────────────────────────────────
+  // The bar in index.html, painted before any JS runs. It says "you are in
+  // Dtv" and puts the way back in one fixed place; the Homeroom frame above
+  // it owns leaving the app, so this header never has an exit control.
+  var headerBar = document.getElementById('app-header-bar');
+  var BACK_HOME = { path: '/', label: 'Back to all series' };
+
+  /** Show a back chevron at the left edge (back is {path, label} or null). */
+  function setHeader(back) {
+    if (!headerBar) return;
+    var children = [];
+    if (back) {
+      var a = navLink(back.path, 'inline-flex h-11 w-11 items-center justify-center rounded-full text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('back', 'h-6 w-6')]);
+      a.setAttribute('aria-label', back.label);
+      a.title = back.label;
+      a.dataset.testid = 'header-back';
+      children.push(a);
+    }
+    children.push(h('span', 'px-2 text-heading', 'Dtv'));
+    headerBar.replaceChildren.apply(headerBar, children);
+  }
+
+  function show(node, back) {
+    setHeader(back || null);
+    root.replaceChildren(node);
+    window.scrollTo(0, 0);
+  }
+
+  // ── States ────────────────────────────────────────────────────────────
+  function loadingBrowse() {
+    return h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), posterSkeleton(12)]);
   }
 
   function loadingDetail() {
     return h('div', 'flex flex-col gap-4', [
-      h('div', 'skeleton h-5 w-24'),
       h('div', 'skeleton h-40 w-full sm:h-56'),
       h('div', 'skeleton h-8 w-2/3'),
       h('div', 'skeleton h-16 w-full'),
@@ -164,7 +200,7 @@
     ]);
   }
 
-  function errorState(message, retry, backLink) {
+  function errorState(message, retry) {
     var retryBtn = h('button', 'btn-primary', 'Retry');
     retryBtn.type = 'button';
     retryBtn.addEventListener('click', retry);
@@ -172,7 +208,6 @@
       h('h2', 'text-heading', message),
       h('p', 'text-body text-muted', 'Check your connection and try again.'),
       retryBtn,
-      backLink || null,
     ]);
   }
 
@@ -207,7 +242,7 @@
           h('p', 'text-body text-muted', 'New series will appear here as soon as they are added.'),
         ]));
       } else {
-        var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'series-grid';
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
         page.appendChild(grid);
@@ -262,13 +297,12 @@
       return a;
     }));
     tabs.setAttribute('aria-label', 'My List');
-    var body = h('div', '', [loadingList()]);
+    var body = h('div', '', [tab === 'history' ? loadingList() : posterSkeleton(6)]);
     show(h('div', 'flex flex-col gap-4', [
-      navLink('/', 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', 'All series'),
       h('h1', 'text-title', 'My List'),
       tabs,
       body,
-    ]));
+    ]), BACK_HOME);
 
     function browseButton() {
       return navLink('/', 'btn-primary', 'Browse series');
@@ -297,7 +331,7 @@
           ]));
           return;
         }
-        var list = h('ul', 'list');
+        var list = h('ul', 'list max-w-2xl');
         list.dataset.testid = 'watch-history';
         data.history.forEach(function (item) { list.appendChild(historyRow(item)); });
         body.replaceChildren(list);
@@ -310,7 +344,7 @@
           ]));
           return;
         }
-        var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'followed-series';
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
         body.replaceChildren(grid);
@@ -398,9 +432,7 @@
   function relatedSection(slug) {
     var section = h('section', '');
     section.appendChild(h('h2', 'section-label', 'Related series'));
-    var body = h('div', 'grid grid-cols-3 gap-4', [0, 1, 2].map(function () {
-      return h('div', 'flex flex-col gap-2', [h('div', 'skeleton aspect-[3/4] w-full'), h('div', 'skeleton h-5 w-3/4')]);
-    }));
+    var body = posterSkeleton(6);
     section.appendChild(body);
     function load() {
       api('/api/series/' + encodeURIComponent(slug) + '/related').then(function (data) {
@@ -408,7 +440,7 @@
           body.replaceWith(body = h('p', 'px-1 text-body text-muted', 'No other series yet.'));
           return;
         }
-        var grid = h('div', 'grid grid-cols-3 gap-4');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'related-series';
         data.series.forEach(function (r) { grid.appendChild(tile(r)); });
         body.replaceWith(body = grid);
@@ -427,8 +459,7 @@
   }
 
   function renderDetail(slug) {
-    show(loadingDetail());
-    var back = navLink('/', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'All series');
+    show(loadingDetail(), BACK_HOME);
     api('/api/series/' + encodeURIComponent(slug)).then(function (data) {
       /** @type {SeriesSummary & {synopsis:string, viewCount:number, episodes:EpisodeItem[],
        *   continueEpisode:{id:number, number:number, resume:boolean}|null}} */
@@ -511,7 +542,7 @@
       });
 
       // Description, clamped to three lines with More / Less when it is longer.
-      var synopsis = h('p', 'text-body line-clamp-3', s.synopsis);
+      var synopsis = h('p', 'text-body line-clamp-3 max-w-prose', s.synopsis);
       synopsis.id = 'series-synopsis';
       var moreBtn = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'More');
       moreBtn.type = 'button';
@@ -526,7 +557,7 @@
 
       var episodes;
       if (s.episodes.length) {
-        var grid = h('ol', 'grid grid-cols-5 gap-2');
+        var grid = h('ol', 'grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-10');
         grid.dataset.testid = 'episode-list';
         s.episodes.forEach(function (e) { grid.appendChild(episodeTile(e, displayState(e, watchingId), openEpisode)); });
         episodes = h('div', '', [grid, legend()]);
@@ -538,7 +569,6 @@
       }
 
       var page = h('div', 'flex flex-col gap-6', [
-        back,
         cover(s, 'h-40 w-full rounded-xl border border-line sm:h-56', 'text-title text-fg'),
         h('div', 'flex flex-col gap-2', [
           h('h1', 'text-title', s.title),
@@ -550,23 +580,23 @@
           h('div', 'flex flex-col items-start', [synopsis, moreBtn]),
         ]),
         h('div', 'flex flex-col gap-2', [
-          h('div', 'flex gap-2', [watchBtn, followBtn, shareBtn]),
+          h('div', 'flex gap-2 sm:max-w-md', [watchBtn, followBtn, shareBtn]),
           message,
         ]),
         h('section', '', [h('h2', 'section-label', 'Episodes'), episodes]),
         relatedSection(slug),
       ]);
-      show(page);
+      show(page, BACK_HOME);
       moreBtn.hidden = synopsis.scrollHeight <= synopsis.clientHeight + 1;
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
           h('h2', 'text-heading', 'Series not found'),
           h('p', 'text-body text-muted', 'It may have been removed.'),
-          back,
-        ]));
+          navLink('/', 'btn-secondary', 'Browse series'),
+        ]), BACK_HOME);
       } else {
-        show(errorState('Could not load this series', function () { renderDetail(slug); }, back));
+        show(errorState('Could not load this series', function () { renderDetail(slug); }), BACK_HOME);
       }
     });
   }
@@ -575,11 +605,11 @@
   // The player arrives in a later phase; this screen names the episode and
   // links back so a tap on an episode lands somewhere real.
   function renderWatch(id) {
-    show(loadingDetail());
     var fromSlug = history.state && history.state.seriesSlug;
     var back = fromSlug
-      ? navLink('/series/' + encodeURIComponent(fromSlug), 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Back to series')
-      : navLink('/', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'All series');
+      ? { path: '/series/' + encodeURIComponent(fromSlug), label: 'Back to series' }
+      : BACK_HOME;
+    show(loadingDetail(), back);
     api('/api/episodes/' + encodeURIComponent(id)).then(function (data) {
       /** @type {EpisodeItem} */
       var e = data.episode;
@@ -613,22 +643,21 @@
         ]);
       }
       show(h('div', 'flex flex-col gap-6', [
-        back,
         h('div', 'flex flex-col gap-1', [
           h('h1', 'text-title', 'Episode ' + e.number + ': ' + e.title),
           h('p', 'text-small text-muted', minutes(e.durationSeconds)),
         ]),
         body,
-      ]));
+      ]), back);
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
           h('h2', 'text-heading', 'Episode not found'),
           h('p', 'text-body text-muted', 'It may have been removed.'),
-          back,
-        ]));
+          navLink('/', 'btn-secondary', 'Browse series'),
+        ]), back);
       } else {
-        show(errorState('Could not load this episode', function () { renderWatch(id); }, back));
+        show(errorState('Could not load this episode', function () { renderWatch(id); }), back);
       }
     });
   }
@@ -790,8 +819,24 @@
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();
   }
+  // Paint a skeleton the moment the app opens, before /api/me answers, so
+  // loading never looks like an empty page. It only picks a shape by path;
+  // route() replaces it as usual once it runs.
+  function bootLoading() {
+    if (/^\/series\/[^/]+\/?$/.test(location.pathname) || /^\/watch\/\d+\/?$/.test(location.pathname)) {
+      show(loadingDetail(), BACK_HOME);
+    } else if (/^\/my-list\/history\/?$/.test(location.pathname)) {
+      show(loadingList(), BACK_HOME);
+    } else if (/^\/my-list\/?$/.test(location.pathname)) {
+      show(posterSkeleton(6), BACK_HOME);
+    } else {
+      show(loadingBrowse());
+    }
+  }
+
   // Ask who is looking first, so the buttons know whether to ask a guest to
   // make an account and onboarding knows whether it is due.
+  bootLoading();
   api('/api/me').then(function (data) { me = data; }, function (err) {
     if (err.status === 401) me = 'guest';
   }).then(function () {
