@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Pool } from 'pg';
 import { ensureProfile } from './me';
+import { monitor } from './monitoring';
 
 /** Id of the signed-in person, or null for a guest. */
 export function userId(req: Request): number | null {
@@ -20,6 +21,7 @@ const ACCOUNT_ACTIONS: Array<[RegExp, string]> = [
   [/^\/api\/me\/check-in$/, 'check in'],
   [/^\/api\/store\/checkout$/, 'buy coins'],
   [/^\/api\/me\/watch-history\/[^/]+\/play$/, 'keep a watch history'],
+  [/^\/api\/admin\//, 'manage series'],
 ];
 
 /** The `account_required` answer for a request a guest may not make. */
@@ -55,11 +57,12 @@ export function upsertProfileOnce(pool: Pool) {
   };
 }
 
-/** Wrap an async route so a thrown error becomes a plain 500. */
+/** Wrap an async route so a thrown error becomes a plain 500 (and is reported). */
 export const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response): void => {
     fn(req, res).catch((err) => {
       console.error(err);
+      monitor.captureException(err, { userId: userId(req), method: req.method, url: req.baseUrl + (req.route ? req.route.path : '') });
       res.status(500).json({ error: 'Something went wrong. Try again.' });
     });
   };

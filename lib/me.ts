@@ -66,16 +66,18 @@ export async function saveFavoriteGenres(
 /**
  * Spend coins to unlock a paid episode (dtv_unlock_episode: one ledger row
  * and one unlock under a lock on the profile). Unlocking a free or already
- * unlocked episode costs nothing. The profile must exist (ensureProfile first).
+ * unlocked episode costs nothing (spent 0). The profile must exist (ensureProfile first).
  */
 export async function unlockEpisode(
   pool: Pool, userId: number, episodeId: number,
-): Promise<{ coinBalance: number } | 'not_found' | 'not_enough_coins'> {
+): Promise<{ coinBalance: number; spent: number } | 'not_found' | 'not_enough_coins'> {
   const { rows } = await pool.query(
     'SELECT result, balance FROM dtv_unlock_episode($1, $2)', [userId, episodeId]);
   const r = rows[0];
   if (r.result === 'not_found' || r.result === 'not_enough_coins') return r.result;
-  return { coinBalance: r.balance };
+  if (r.result !== 'ok') return { coinBalance: r.balance, spent: 0 };
+  const price = await pool.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
+  return { coinBalance: r.balance, spent: price.rows[0].coin_price };
 }
 
 /** The day "now" falls on in UTC, as YYYY-MM-DD: check-ins and ad limits count by it. */
@@ -121,7 +123,7 @@ export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSu
             COUNT(e.id)::int AS episode_count,
             COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count
        FROM follows f
-       JOIN series s ON s.id = f.series_id
+       JOIN series s ON s.id = f.series_id AND s.is_published
        LEFT JOIN episodes e ON e.series_id = s.id
       WHERE f.user_id = $1
       GROUP BY s.id, f.created_at
@@ -157,13 +159,17 @@ export async function listWatchHistory(pool: Pool, userId: number): Promise<Watc
 
 /**
  * Record progress. The profile must exist (ensureProfile first). Returns false
- * when there is no such episode.
+ * when there is no such episode, else whether this save finished the episode
+ * (it was not already marked watched).
  */
 export async function saveProgress(
   pool: Pool, userId: number, episodeId: number, positionSeconds: number, completed: boolean,
-): Promise<boolean> {
+): Promise<false | { newlyCompleted: boolean }> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
+  const prev = await pool.query(
+    'SELECT completed FROM watch_history WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
+  const wasCompleted = prev.rows.length > 0 && prev.rows[0].completed === true;
   const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
@@ -179,7 +185,7 @@ export async function saveProgress(
       `UPDATE series SET view_count = view_count + 1
         WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
   }
-  return true;
+  return { newlyCompleted: completed && !wasCompleted };
 }
 
 /**

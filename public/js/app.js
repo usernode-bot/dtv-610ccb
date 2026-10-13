@@ -1,8 +1,9 @@
 // Dtv front end: a series browse screen, a series detail screen, the watch
-// screen, My List, the Coins page, the transaction history and the genre onboarding.
-// Path routes: "/" (browse), "/series/<slug>" (detail), "/watch/<episodeId>"
-// (watch), "/my-list" (followed series), "/my-list/history" (watch history),
-// "/store" (Coins) and "/history" (transactions). Locked episodes open
+// screen, My List, the Coins page, the transaction history, the genre onboarding
+// and, for admins, the series manager. Path routes: "/" (browse),
+// "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
+// (followed series), "/my-list/history" (watch history), "/store" (Coins),
+// "/history" (transactions) and "/admin" (series manager). Locked episodes open
 // the unlock sheet. Coins only ever change on the server: the page asks for an
 // action and shows the balance the server answers with. Older "#/series/<slug>" links are
 // moved to the path form. Links marked data-nav navigate in place. Onboarding
@@ -10,7 +11,12 @@
 // signed-in person who has not picked genres yet, on every route until they
 // do. Everything is
 // built with DOM calls and textContent, so catalogue text is never parsed as
-// HTML. Class names are whole literals so the Tailwind build can see them.
+// HTML. A sticky "Dtv" header sits above every screen and holds the back
+// chevron for the current screen (setHeader per route); leaving the app is
+// the Homeroom frame's job, not the header's. Class names are whole literals
+// so the Tailwind build can see them.
+// Every string a person reads comes from public/js/i18n.js (t(key)), in
+// English or Indonesian.
 //
 // @typedef {{id:number, slug:string, title:string, genre:string, coverUrl:string|null,
 //   coverTone:number, episodeCount:number, freeEpisodeCount:number, following:boolean}} SeriesSummary
@@ -20,6 +26,7 @@
 
 (function () {
   var root = document.getElementById('app');
+  var t = window.dtvI18n.t;
 
   // Neutral placeholder cover tints (colour tokens only), indexed by coverTone.
   var TONES = ['bg-accent/15', 'bg-raised', 'bg-accent/30', 'bg-line', 'bg-accent/20'];
@@ -75,7 +82,8 @@
     return el;
   }
 
-  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function episodesCount(n) { return t('episodesCount', { n: n }); }
+  function coinsCount(n) { return t('coinsCount', { n: n }); }
 
   function count(n) {
     try { return n.toLocaleString(); } catch (_) { return String(n); }
@@ -106,6 +114,11 @@
     play: [['path', { d: 'M7 5l12 7-12 7z' }]],
     check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     share: [['path', { d: 'M12 3v12' }], ['path', { d: 'M7 8l5-5 5 5' }], ['path', { d: 'M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6' }]],
+    bookmark: [['path', { d: 'M6 4h12v17l-6-4-6 4z' }]],
+    film: [['rect', { x: 3, y: 10, width: 18, height: 10, rx: 2 }],
+      ['path', { d: 'M3 10 2.4 6.6 19.1 3.7 19.7 7.1z' }],
+      ['path', { d: 'M7.5 5.7 9 9' }], ['path', { d: 'M12.8 4.8 14.3 8.1' }]],
+    back: [['path', { d: 'M15 18l-6-6 6-6' }]],
   };
 
   function icon(name, cls) {
@@ -136,17 +149,24 @@
   }
 
   function compact(n) {
-    try { return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(n); }
+    try { return new Intl.NumberFormat(window.dtvI18n.locale(), { notation: 'compact' }).format(n); }
     catch (_) { return String(n); }
   }
 
-  /** Cover art: the image when there is one, else a tinted tile with the title's initial. */
-  function cover(s, sizeCls, letterCls) {
+  /**
+   * Cover art: the image when there is one, else a tinted tile with the
+   * title's initial. Grid covers load lazily; the detail banner (priority)
+   * loads first. The box keeps its size, so nothing shifts as images arrive.
+   */
+  function cover(s, sizeCls, letterCls, priority) {
     var box = h('div', 'flex items-center justify-center overflow-hidden ' + sizeCls + ' ' + (TONES[s.coverTone % TONES.length] || TONES[0]));
     if (s.coverUrl) {
       var img = h('img', 'h-full w-full object-cover');
-      img.src = s.coverUrl;
       img.alt = '';
+      img.decoding = 'async';
+      if (priority) img.setAttribute('fetchpriority', 'high');
+      else img.loading = 'lazy';
+      img.src = s.coverUrl;
       box.appendChild(img);
     } else {
       box.appendChild(h('span', letterCls, s.title.charAt(0)));
@@ -154,55 +174,113 @@
     return box;
   }
 
-  function show(node) {
-    root.replaceChildren(node);
-    window.scrollTo(0, 0);
+  // Set by an in-app navigation: once the new screen's heading is on
+  // screen, move keyboard and screen reader focus to it.
+  var focusHeading = false;
+
+  function setTitle(title) {
+    document.title = title ? title + ' | Dtv' : 'Dtv';
   }
 
-  // ── States ────────────────────────────────────────────────────────────
-  function loadingBrowse() {
-    var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
-    for (var i = 0; i < 6; i++) {
+  function loadingNode(node) {
+    node.dataset.loading = '1';
+    return node;
+  }
+
+  // Poster grids: 2 columns on a phone, 3 on a large phone or small tablet,
+  // 4 on a tablet, 5 on a laptop and 6 on a wide screen. A whole literal, so
+  // the Tailwind build sees it. Breakpoints measure the Dtv frame.
+  var POSTER_GRID = 'grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
+
+  /** n poster placeholders in the shared grid, for a loading state. */
+  function posterSkeleton(n) {
+    var grid = h('div', POSTER_GRID);
+    for (var i = 0; i < n; i++) {
       grid.appendChild(h('div', 'flex flex-col gap-2', [
         h('div', 'skeleton aspect-[3/4] w-full'),
         h('div', 'skeleton h-5 w-3/4'),
         h('div', 'skeleton h-4 w-1/2'),
       ]));
     }
-    return h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), grid]);
+    return loadingNode(grid);
+  }
+
+  // ── App header ────────────────────────────────────────────────────────
+  // The bar in index.html, painted before any JS runs. It says "you are in
+  // Dtv" and puts the way back in one fixed place; the Homeroom frame above
+  // it owns leaving the app, so this header never has an exit control.
+  var headerBar = document.getElementById('app-header-bar');
+  var BACK_HOME = { path: '/', label: 'Back to all series' };
+
+  /** Show a back chevron at the left edge (back is {path, label} or null). */
+  function setHeader(back) {
+    if (!headerBar) return;
+    var children = [];
+    if (back) {
+      var a = navLink(back.path, 'inline-flex h-11 w-11 items-center justify-center rounded-full text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('back', 'h-6 w-6')]);
+      a.setAttribute('aria-label', back.label);
+      a.title = back.label;
+      a.dataset.testid = 'header-back';
+      children.push(a);
+    }
+    children.push(h('span', 'px-2 text-heading', 'Dtv'));
+    headerBar.replaceChildren.apply(headerBar, children);
+  }
+
+  /** Put a screen in place. Loading screens are marked data-loading. */
+  function show(node, back) {
+    setHeader(back || null);
+    root.replaceChildren(node);
+    window.scrollTo(0, 0);
+    var loading = node.dataset && node.dataset.loading === '1';
+    root.setAttribute('aria-busy', loading ? 'true' : 'false');
+    if (!loading && focusHeading) {
+      var heading = root.querySelector('h1, h2');
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+        focusHeading = false;
+      }
+    }
+  }
+
+  // ── States ────────────────────────────────────────────────────────────
+  function loadingBrowse() {
+    return loadingNode(h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), posterSkeleton(12)]));
   }
 
   function loadingDetail() {
-    return h('div', 'flex flex-col gap-4', [
-      h('div', 'skeleton h-5 w-24'),
+    return loadingNode(h('div', 'flex flex-col gap-4', [
       h('div', 'skeleton h-40 w-full sm:h-56'),
       h('div', 'skeleton h-8 w-2/3'),
       h('div', 'skeleton h-16 w-full'),
       h('div', 'skeleton h-11 w-full'),
       h('div', 'skeleton h-48 w-full'),
-    ]);
+    ]));
   }
 
-  function errorState(message, retry, backLink) {
-    var retryBtn = h('button', 'btn-primary', 'Retry');
+  function errorState(message, retry) {
+    var retryBtn = h('button', 'btn-primary', t('retry'));
     retryBtn.type = 'button';
     retryBtn.addEventListener('click', retry);
     return h('div', 'state-error', [
       h('h2', 'text-heading', message),
-      h('p', 'text-body text-muted', 'Check your connection and try again.'),
+      h('p', 'text-body text-muted', t('checkConnection')),
       retryBtn,
-      backLink || null,
     ]);
   }
 
   // ── Browse ────────────────────────────────────────────────────────────
+  // Where a request for a series is filed: this app's page on Homeroom.
+  var REQUEST_URL = 'https://app.onhomeroom.com/#app/dtv-610ccb';
+
   function tile(/** @type {SeriesSummary} */ s) {
     var a = navLink('/series/' + encodeURIComponent(s.slug), 'flex flex-col gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
       cover(s, 'aspect-[3/4] w-full rounded-xl border border-line', 'text-title text-fg'),
       h('div', 'flex flex-col', [
         h('h2', 'text-body font-semibold', s.title),
-        h('p', 'text-small text-muted', plural(s.episodeCount, 'episode', 'episodes') + (s.genre ? ' · ' + s.genre : '')),
-        s.following ? h('p', 'text-small font-medium text-accent', 'Following') : null,
+        h('p', 'text-small text-muted', episodesCount(s.episodeCount) + (s.genre ? ' · ' + s.genre : '')),
+        s.following ? h('p', 'text-small font-medium text-accent', t('following')) : null,
       ]),
     ]);
     a.dataset.testid = 'series-tile';
@@ -210,30 +288,43 @@
   }
 
   function renderBrowse() {
+    setTitle('');
     show(loadingBrowse());
+    // The follow count fills the header button when it arrives; it never
+    // blocks or fails the catalogue itself.
+    var followsReq = isGuest() ? null : api('/api/me/follows');
     api('/api/series').then(function (data) {
       var page = h('div', 'flex flex-col gap-4');
+      var link = myListLink();
+      if (followsReq) followsReq.then(function (d) { link.setCount(d.series.length); }).catch(function () {});
       page.appendChild(h('div', 'flex items-center justify-between gap-4', [
-        h('h1', 'text-title', 'Series'),
-        h('div', 'flex items-center gap-4', [myListLink(), coinChip()]),
+        h('h1', 'text-title', t('series')),
+        h('div', 'flex items-center gap-4', [adminLink(), link, coinChip()]),
       ]));
       if (data.demo) {
-        page.appendChild(h('p', 'text-small text-muted', 'Staging demo catalogue: these series are made up for testing.'));
+        page.appendChild(h('p', 'text-small text-muted', t('stagingDemo')));
       }
       if (!data.series.length) {
         page.appendChild(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'No series yet'),
-          h('p', 'text-body text-muted', 'New series will appear here as soon as they are added.'),
+          h('div', 'mb-2 flex h-20 w-20 items-center justify-center rounded-xl bg-accent/15 text-accent', [icon('film', 'h-10 w-10')]),
+          h('h2', 'text-heading', t('noSeriesTitle')),
+          h('p', 'text-body text-muted', t('noSeriesBody')),
+          requestLink(),
         ]));
       } else {
-        var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'series-grid';
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
         page.appendChild(grid);
       }
+      page.appendChild(languagePicker());
       show(page);
+      if (refocusLanguage) {
+        refocusLanguage = false;
+        document.getElementById('language-select').focus();
+      }
     }).catch(function () {
-      show(errorState('Could not load series', renderBrowse));
+      show(errorState(t('loadSeriesFailed'), renderBrowse));
     });
   }
 
@@ -247,9 +338,58 @@
     return a;
   }
 
+  /** An external link to where requests for this app are filed. Not data-nav, so the in-app click handler leaves it alone. */
+  function requestLink() {
+    var a = h('a', 'btn-primary mt-2', 'Request a series');
+    a.href = REQUEST_URL;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.dataset.testid = 'request-series';
+    return a;
+  }
+
+  // Language: English or Bahasa Indonesia. Starts from the Homeroom or device
+  // language (public/js/i18n.js); a choice here is kept on this device.
+  var refocusLanguage = false;
+  function languagePicker() {
+    var select = h('select', 'field w-auto');
+    select.id = 'language-select';
+    select.dataset.testid = 'language-select';
+    window.dtvI18n.locales.forEach(function (l) {
+      var o = h('option', '', l.name);
+      o.value = l.code;
+      o.lang = l.code;
+      if (l.code === window.dtvI18n.locale()) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', function () {
+      window.dtvI18n.setLocale(select.value);
+      applyChrome();
+      refocusLanguage = true;
+      route();
+    });
+    var label = h('label', 'text-small text-muted', t('language'));
+    label.htmlFor = select.id;
+    return h('div', 'mt-4 flex items-center gap-3 border-t border-line pt-4', [label, select]);
+  }
+
+  /** "Manage series", for admins only. */
+  function adminLink() {
+    if (!isAdmin()) return null;
+    var a = navLink('/admin', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Manage series');
+    a.dataset.testid = 'admin-link';
+    return a;
+  }
+
+  // The My List entry on the browse header: a quiet bordered pill matching the
+  // unselected My List tabs, with a bookmark icon and (once known) the number
+  // of series the person follows. Guests and failed counts just see "My List".
   function myListLink() {
-    var a = navLink('/my-list', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'My List');
+    var label = h('span', '', t('myList'));
+    label.dataset.testid = 'my-list-count-label';
+    var a = navLink('/my-list', 'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-line bg-surface px-4 text-body font-medium text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('bookmark'), label]);
     a.dataset.testid = 'my-list-link';
+    a.setCount = function (n) { label.textContent = t('myList') + ' (' + n + ')'; };
     return a;
   }
 
@@ -264,12 +404,12 @@
   }
 
   function historyRow(item) {
-    var progress = item.completed ? 'Watched'
-      : item.positionSeconds > 0 ? 'Stopped at ' + minutes(item.positionSeconds) : 'Started';
+    var progress = item.completed ? t('watched')
+      : item.positionSeconds > 0 ? t('stoppedAt', { time: minutes(item.positionSeconds) }) : t('started');
     var a = navLink('/watch/' + item.episodeId, 'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
       h('span', 'flex min-w-0 flex-1 flex-col', [
         h('span', 'truncate text-body font-semibold', item.seriesTitle),
-        h('span', 'truncate text-small text-muted', 'Episode ' + item.episodeNumber + ': ' + item.episodeTitle),
+        h('span', 'truncate text-small text-muted', t('episodeTitle', { n: item.episodeNumber, title: item.episodeTitle })),
       ]),
       h('span', 'shrink-0 text-small text-muted', progress),
     ]);
@@ -278,38 +418,43 @@
   }
 
   function renderMyList(tab) {
+    setTitle(t('myList'));
     var tabs = h('nav', 'flex gap-2', [
-      ['following', '/my-list', 'Following'],
-      ['history', '/my-list/history', 'Watch history'],
-    ].map(function (t) {
-      var on = t[0] === tab;
-      var a = navLink(t[1], on
+      ['following', '/my-list', t('following')],
+      ['history', '/my-list/history', t('watchHistory')],
+    ].map(function (tb) {
+      var on = tb[0] === tab;
+      var a = navLink(tb[1], on
         ? 'inline-flex min-h-11 items-center rounded-full border border-accent bg-accent px-4 text-body font-medium text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
-        : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', t[2]);
+        : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', tb[2]);
       if (on) a.setAttribute('aria-current', 'page');
-      a.dataset.testid = 'my-list-tab-' + t[0];
+      a.dataset.testid = 'my-list-tab-' + tb[0];
       return a;
     }));
-    tabs.setAttribute('aria-label', 'My List');
-    var body = h('div', '', [loadingList()]);
+    tabs.setAttribute('aria-label', t('myList'));
+    var body = h('div', '', [tab === 'history' ? loadingList() : posterSkeleton(6)]);
+    body.setAttribute('aria-busy', 'true');
     show(h('div', 'flex flex-col gap-4', [
-      navLink('/', 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', 'All series'),
-      h('h1', 'text-title', 'My List'),
+      h('h1', 'text-title', t('myList')),
       tabs,
       body,
-    ]));
+    ]), BACK_HOME);
 
     function browseButton() {
-      return navLink('/', 'btn-primary', 'Browse series');
+      return navLink('/', 'btn-primary', t('browseSeries'));
+    }
+    function fill(node) {
+      body.replaceChildren(node);
+      body.setAttribute('aria-busy', 'false');
     }
 
     if (isGuest()) {
-      var join = h('button', 'btn-primary', 'Make an account');
+      var join = h('button', 'btn-primary', t('makeAccount'));
       join.type = 'button';
       join.addEventListener('click', function () { askForAccount('keep your own list'); });
-      body.replaceChildren(h('div', 'state-empty', [
-        h('h2', 'text-heading', 'Your list needs an account'),
-        h('p', 'text-body text-muted', 'Make an account to follow series and keep a watch history.'),
+      fill(h('div', 'state-empty', [
+        h('h2', 'text-heading', t('listNeedsAccountTitle')),
+        h('p', 'text-body text-muted', t('listNeedsAccountBody')),
         join,
       ]));
       return;
@@ -319,34 +464,34 @@
     api(path).then(function (data) {
       if (tab === 'history') {
         if (!data.history.length) {
-          body.replaceChildren(h('div', 'state-empty', [
-            h('h2', 'text-heading', 'Nothing watched yet'),
-            h('p', 'text-body text-muted', 'Episodes you play show up here, most recent first.'),
+          fill(h('div', 'state-empty', [
+            h('h2', 'text-heading', t('nothingWatchedTitle')),
+            h('p', 'text-body text-muted', t('nothingWatchedBody')),
             browseButton(),
           ]));
           return;
         }
-        var list = h('ul', 'list');
+        var list = h('ul', 'list max-w-2xl');
         list.dataset.testid = 'watch-history';
         data.history.forEach(function (item) { list.appendChild(historyRow(item)); });
-        body.replaceChildren(list);
+        fill(list);
       } else {
         if (!data.series.length) {
-          body.replaceChildren(h('div', 'state-empty', [
-            h('h2', 'text-heading', 'You are not following any series'),
-            h('p', 'text-body text-muted', 'Tap Follow on a series to keep it here.'),
+          fill(h('div', 'state-empty', [
+            h('h2', 'text-heading', t('notFollowingTitle')),
+            h('p', 'text-body text-muted', t('notFollowingBody')),
             browseButton(),
           ]));
           return;
         }
-        var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'followed-series';
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
-        body.replaceChildren(grid);
+        fill(grid);
       }
     }).catch(function () {
-      body.replaceChildren(errorState(
-        tab === 'history' ? 'Could not load your watch history' : 'Could not load the series you follow',
+      fill(errorState(
+        tab === 'history' ? t('loadHistoryFailed') : t('loadFollowsFailed'),
         function () { renderMyList(tab); }));
     });
   }
@@ -476,9 +621,9 @@
       }).catch(function (err) {
         if (err.status === 402) {
           refreshMe().then(function () { state.balance = me.profile.coinBalance; paint(); }, function () {});
-          fail('Not enough coins to unlock episode ' + e.number + '.');
+          fail(t('notEnoughCoins', { n: e.number }));
         } else if (err.status === 401) { state.busy = false; paint(); }
-        else fail('Could not unlock. Try again.');
+        else fail(t('unlockFailed'));
       });
     }
 
@@ -611,7 +756,7 @@
     return e.state;
   }
 
-  var STATE_LABEL = { free: 'free', unlocked: 'unlocked', locked: 'locked', watching: 'currently watching', watched: 'watched' };
+  var STATE_KEY = { free: 'stateFree', unlocked: 'stateUnlocked', locked: 'stateLocked', watching: 'stateWatching', watched: 'stateWatched' };
 
   function episodeTile(/** @type {EpisodeItem} */ e, state, onOpen) {
     var cls = {
@@ -622,7 +767,7 @@
       watched: 'border border-line bg-raised text-muted',
     }[state];
     var marker = {
-      free: h('span', 'text-small font-medium text-accent', 'Free'),
+      free: h('span', 'text-small font-medium text-accent', t('freeBadge')),
       unlocked: icon('unlock'),
       locked: h('span', 'inline-flex items-center gap-1 text-small', [icon('coin', 'h-3 w-3'), String(e.coinPrice)]),
       watching: icon('play'),
@@ -635,8 +780,8 @@
     ]);
     btn.type = 'button';
     btn.title = e.title;
-    btn.setAttribute('aria-label', 'Episode ' + e.number + ', ' + e.title + ', ' + STATE_LABEL[state] +
-      (state === 'locked' ? ', ' + plural(e.coinPrice, 'coin', 'coins') : ''));
+    btn.setAttribute('aria-label', t('episodeLabel', { n: e.number, title: e.title, state: t(STATE_KEY[state]) }) +
+      (state === 'locked' ? ', ' + coinsCount(e.coinPrice) : ''));
     btn.addEventListener('click', function () { onOpen(e); });
     if (state === 'locked') btn.dataset.testid = 'unlock-button';
     var li = h('li', '', [btn]);
@@ -649,36 +794,34 @@
       return h('li', 'inline-flex items-center gap-1', [marker, label]);
     }
     return h('ul', 'mt-3 flex flex-wrap gap-x-4 gap-y-1 px-1 text-small text-muted', [
-      item(icon('coin', 'h-3 w-3'), 'Locked (coins)'),
-      item(icon('unlock', 'h-3 w-3'), 'Unlocked'),
-      item(icon('play', 'h-3 w-3'), 'Watching'),
-      item(icon('check', 'h-3 w-3'), 'Watched'),
+      item(icon('coin', 'h-3 w-3'), t('legendLocked')),
+      item(icon('unlock', 'h-3 w-3'), t('legendUnlocked')),
+      item(icon('play', 'h-3 w-3'), t('legendWatching')),
+      item(icon('check', 'h-3 w-3'), t('legendWatched')),
     ]);
   }
 
   function relatedSection(slug) {
     var section = h('section', '');
-    section.appendChild(h('h2', 'section-label', 'Related series'));
-    var body = h('div', 'grid grid-cols-3 gap-4', [0, 1, 2].map(function () {
-      return h('div', 'flex flex-col gap-2', [h('div', 'skeleton aspect-[3/4] w-full'), h('div', 'skeleton h-5 w-3/4')]);
-    }));
+    section.appendChild(h('h2', 'section-label', t('relatedSeries')));
+    var body = posterSkeleton(6);
     section.appendChild(body);
     function load() {
       api('/api/series/' + encodeURIComponent(slug) + '/related').then(function (data) {
         if (!data.series.length) {
-          body.replaceWith(body = h('p', 'px-1 text-body text-muted', 'No other series yet.'));
+          body.replaceWith(body = h('p', 'px-1 text-body text-muted', t('noOtherSeries')));
           return;
         }
-        var grid = h('div', 'grid grid-cols-3 gap-4');
+        var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'related-series';
         data.series.forEach(function (r) { grid.appendChild(tile(r)); });
         body.replaceWith(body = grid);
       }).catch(function () {
-        var retry = h('button', 'btn-secondary', 'Retry');
+        var retry = h('button', 'btn-secondary', t('retry'));
         retry.type = 'button';
         retry.addEventListener('click', load);
         body.replaceWith(body = h('div', 'flex flex-col items-start gap-2 px-1', [
-          h('p', 'text-body text-muted', 'Could not load related series. The rest of this page still works.'),
+          h('p', 'text-body text-muted', t('relatedFailed')),
           retry,
         ]));
       });
@@ -688,12 +831,12 @@
   }
 
   function renderDetail(slug) {
-    show(loadingDetail());
-    var back = navLink('/', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'All series');
+    show(loadingDetail(), BACK_HOME);
     api('/api/series/' + encodeURIComponent(slug)).then(function (data) {
       /** @type {SeriesSummary & {synopsis:string, viewCount:number, episodes:EpisodeItem[],
        *   continueEpisode:{id:number, number:number, resume:boolean}|null}} */
       var s = data.series;
+      setTitle(s.title);
       var message = h('p', 'text-small text-muted');
       message.setAttribute('role', 'status');
       function notice(text, isError) {
@@ -715,7 +858,7 @@
         : s.episodes[0];
       var watchBtn = h('button', 'btn-primary flex-1', [
         icon('play'),
-        s.continueEpisode ? 'Continue episode ' + s.continueEpisode.number : 'Watch now',
+        s.continueEpisode ? t('continueEpisode', { n: s.continueEpisode.number }) : t('watchNow'),
       ]);
       watchBtn.type = 'button';
       watchBtn.dataset.testid = 'primary-watch';
@@ -729,7 +872,7 @@
       var followBtn = h('button', 'btn-secondary');
       followBtn.type = 'button';
       function paintFollow() {
-        followBtn.textContent = following ? 'Following' : 'Follow';
+        followBtn.textContent = following ? t('following') : t('follow');
         followBtn.setAttribute('aria-pressed', following ? 'true' : 'false');
       }
       paintFollow();
@@ -747,20 +890,20 @@
             following = !want;
             paintFollow();
             // A guest gets "account_required"; the platform bridge shows its own sign-up sheet.
-            if (err.status !== 401) notice('Could not update follow. Try again.', true);
+            if (err.status !== 401) notice(t('followFailed'), true);
           });
       });
 
       // Share: the system share sheet where there is one, else copy the link.
       var shareBtn = h('button', 'btn-secondary', [icon('share')]);
       shareBtn.type = 'button';
-      shareBtn.setAttribute('aria-label', 'Share');
-      shareBtn.title = 'Share';
+      shareBtn.setAttribute('aria-label', t('share'));
+      shareBtn.title = t('share');
       shareBtn.addEventListener('click', function () {
         var url = location.origin + '/series/' + encodeURIComponent(slug);
         function copy() {
           if (!navigator.clipboard) return Promise.reject(new Error('no clipboard'));
-          return navigator.clipboard.writeText(url).then(function () { notice('Link copied.'); });
+          return navigator.clipboard.writeText(url).then(function () { notice(t('linkCopied')); });
         }
         var shared = navigator.share
           ? navigator.share({ title: s.title, url: url }).catch(function (err) {
@@ -768,87 +911,114 @@
               return copy();
             })
           : copy();
-        shared.catch(function () { notice('Could not copy. The link is ' + url, true); });
+        shared.catch(function () { notice(t('copyFailed', { url: url }), true); });
       });
 
       // Description, clamped to three lines with More / Less when it is longer.
-      var synopsis = h('p', 'text-body line-clamp-3', s.synopsis);
+      var synopsis = h('p', 'text-body line-clamp-3 max-w-prose', s.synopsis);
       synopsis.id = 'series-synopsis';
-      var moreBtn = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'More');
+      var moreBtn = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-accent', t('more'));
       moreBtn.type = 'button';
       moreBtn.hidden = true;
       moreBtn.setAttribute('aria-controls', synopsis.id);
       moreBtn.setAttribute('aria-expanded', 'false');
       moreBtn.addEventListener('click', function () {
         var open = synopsis.classList.toggle('line-clamp-3') === false;
-        moreBtn.textContent = open ? 'Less' : 'More';
+        moreBtn.textContent = open ? t('less') : t('more');
         moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
 
       var episodes;
       if (s.episodes.length) {
-        var grid = h('ol', 'grid grid-cols-5 gap-2');
+        var grid = h('ol', 'grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-10');
         grid.dataset.testid = 'episode-list';
         s.episodes.forEach(function (e) { grid.appendChild(episodeTile(e, displayState(e, watchingId), openEpisode)); });
         episodes = h('div', '', [grid, legend()]);
       } else {
         episodes = h('div', 'state-empty', [
-          h('h3', 'text-heading', 'No episodes yet'),
-          h('p', 'text-body text-muted', 'Episodes will show up here once they are added.'),
+          h('h3', 'text-heading', t('noEpisodesTitle')),
+          h('p', 'text-body text-muted', t('noEpisodesBody')),
         ]);
       }
 
       var page = h('div', 'flex flex-col gap-6', [
-        back,
-        cover(s, 'h-40 w-full rounded-xl border border-line sm:h-56', 'text-title text-fg'),
+        cover(s, 'h-40 w-full rounded-xl border border-line sm:h-56', 'text-title text-fg', true),
         h('div', 'flex flex-col gap-2', [
           h('h1', 'text-title', s.title),
           h('div', 'flex flex-wrap items-center gap-2', [
             s.genre ? h('span', 'rounded-full bg-raised px-3 py-1 text-small text-fg', s.genre) : null,
-            h('span', 'text-small text-muted', plural(s.episodes.length, 'episode', 'episodes') + ' · ' +
-              compact(s.viewCount) + (s.viewCount === 1 ? ' view' : ' views')),
+            h('span', 'text-small text-muted', episodesCount(s.episodes.length) + ' · ' +
+              t('views', { n: s.viewCount, count: compact(s.viewCount) })),
           ]),
           h('div', 'flex flex-col items-start', [synopsis, moreBtn]),
         ]),
         h('div', 'flex flex-col gap-2', [
-          h('div', 'flex gap-2', [watchBtn, followBtn, shareBtn]),
+          h('div', 'flex gap-2 sm:max-w-md', [watchBtn, followBtn, shareBtn]),
           message,
         ]),
-        h('section', '', [h('h2', 'section-label', 'Episodes'), episodes]),
+        h('section', '', [h('h2', 'section-label', t('episodes')), episodes]),
         relatedSection(slug),
       ]);
-      show(page);
+      show(page, BACK_HOME);
       moreBtn.hidden = synopsis.scrollHeight <= synopsis.clientHeight + 1;
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'Series not found'),
-          h('p', 'text-body text-muted', 'It may have been removed.'),
-          back,
-        ]));
+          h('h2', 'text-heading', t('seriesNotFound')),
+          h('p', 'text-body text-muted', t('mayBeRemoved')),
+          navLink('/', 'btn-secondary', t('browseSeries')),
+        ]), BACK_HOME);
       } else {
-        show(errorState('Could not load this series', function () { renderDetail(slug); }, back));
+        show(errorState(t('loadOneSeriesFailed'), function () { renderDetail(slug); }), BACK_HOME);
       }
     });
   }
+
+  // ── Analytics: drop-off ───────────────────────────────────────────────
+  // The server records play, complete and unlock itself. Leaving a playable
+  // episode before the end (another screen, closing the app) is reported
+  // here as drop_off, with the last position the player gave. A player sets
+  // that with window.dtv.reportPlayback(seconds, completed).
+  var watching = null; // { episodeId, position, completed }
+
+  window.dtv.reportPlayback = function (seconds, completed) {
+    if (!watching) return;
+    if (typeof seconds === 'number' && seconds >= 0) watching.position = Math.floor(seconds);
+    if (completed) watching.completed = true;
+  };
+
+  function endWatching() {
+    var w = watching;
+    watching = null;
+    if (!w || w.completed || !me || isGuest()) return;
+    var headers = { 'content-type': 'application/json' };
+    if (token) headers['x-usernode-token'] = token;
+    fetch('/api/events', {
+      method: 'POST', headers: headers, keepalive: true,
+      body: JSON.stringify({ name: 'drop_off', episodeId: w.episodeId, positionSeconds: w.position }),
+    }).catch(function () {});
+  }
+  window.addEventListener('pagehide', endWatching);
 
   // ── Watch ─────────────────────────────────────────────────────────────
   // The player arrives in a later phase; this screen names the episode and
   // links back so a tap on an episode lands somewhere real.
   function renderWatch(id) {
-    show(loadingDetail());
     var fromSlug = history.state && history.state.seriesSlug;
     var back = fromSlug
-      ? navLink('/series/' + encodeURIComponent(fromSlug), 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Back to series')
-      : navLink('/', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'All series');
+      ? { path: '/series/' + encodeURIComponent(fromSlug), label: t('backToSeries') }
+      : BACK_HOME;
+    show(loadingDetail(), back);
     api('/api/episodes/' + encodeURIComponent(id)).then(function (data) {
       /** @type {EpisodeItem} */
       var e = data.episode;
+      var title = t('episodeTitle', { n: e.number, title: e.title });
+      setTitle(title);
       var message = h('p', 'text-small text-muted');
       message.setAttribute('role', 'status');
       var body;
       if (e.state === 'locked') {
-        var unlockBtn = h('button', 'btn-primary', [icon('coin'), 'Unlock for ' + plural(e.coinPrice, 'coin', 'coins')]);
+        var unlockBtn = h('button', 'btn-primary', [icon('coin'), t('unlockFor', { coins: coinsCount(e.coinPrice) })]);
         unlockBtn.type = 'button';
         unlockBtn.addEventListener('click', function () {
           openUnlockSheet({
@@ -858,38 +1028,39 @@
           });
         });
         body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'This episode is locked'),
-          h('p', 'text-body text-muted', 'Unlock it with coins or by watching an ad.'),
+          h('h2', 'text-heading', t('lockedTitle')),
+          h('p', 'text-body text-muted', t('lockedBody')),
           unlockBtn,
           message,
         ]);
       } else {
-        // Opening a playable episode puts it in the person's watch history.
+        // Opening a playable episode puts it in the person's watch history
+        // (and the server counts a play).
         if (me && !isGuest()) {
           api('/api/me/watch-history/' + e.id + '/play', 'POST').catch(function () {});
+          watching = { episodeId: e.id, position: 0, completed: false };
         }
         body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'The player is coming soon'),
-          h('p', 'text-body text-muted', 'Watching episodes arrives in a later update.'),
+          h('h2', 'text-heading', t('playerSoonTitle')),
+          h('p', 'text-body text-muted', t('playerSoonBody')),
         ]);
       }
       show(h('div', 'flex flex-col gap-6', [
-        back,
         h('div', 'flex flex-col gap-1', [
-          h('h1', 'text-title', 'Episode ' + e.number + ': ' + e.title),
+          h('h1', 'text-title', title),
           h('p', 'text-small text-muted', minutes(e.durationSeconds)),
         ]),
         body,
-      ]));
+      ]), back);
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'Episode not found'),
-          h('p', 'text-body text-muted', 'It may have been removed.'),
-          back,
-        ]));
+          h('h2', 'text-heading', t('episodeNotFound')),
+          h('p', 'text-body text-muted', t('mayBeRemoved')),
+          navLink('/', 'btn-secondary', t('browseSeries')),
+        ]), back);
       } else {
-        show(errorState('Could not load this episode', function () { renderWatch(id); }, back));
+        show(errorState(t('loadEpisodeFailed'), function () { renderWatch(id); }), back);
       }
     });
   }
@@ -1218,8 +1389,9 @@
   }
 
   function onboardingFrame(children) {
-    var title = h('h1', 'text-title', 'What do you like to watch?');
+    var title = h('h1', 'text-title', t('onboardingTitle'));
     title.id = 'onboarding-title';
+    title.tabIndex = -1;
     return h('div', 'mx-auto flex min-h-full max-w-md flex-col gap-6 px-6 pb-8 pt-16', [title].concat(children));
   }
 
@@ -1228,6 +1400,9 @@
     var skel = h('div', 'flex flex-wrap gap-2');
     for (var i = 0; i < 8; i++) skel.appendChild(h('div', 'skeleton h-11 w-28 rounded-full'));
     layer.replaceChildren(onboardingFrame([skel]));
+    // Move focus into the dialog, onto its title.
+    var heading = layer.querySelector('#onboarding-title');
+    if (heading) heading.focus({ preventScroll: true });
 
     api('/api/genres').then(function (data) {
       if (!layer) return;
@@ -1237,12 +1412,12 @@
       var due = onboardingDue();
 
       if (!genres.length) {
-        var backBtn = h('button', 'btn-secondary', 'Back to series');
+        var backBtn = h('button', 'btn-secondary', t('backToSeries'));
         backBtn.type = 'button';
         backBtn.addEventListener('click', function () { location.hash = '#/'; });
         layer.replaceChildren(onboardingFrame([h('div', 'state-empty', [
-          h('h2', 'text-heading', 'No genres yet'),
-          h('p', 'text-body text-muted', 'You can pick favourites once the first genres are added.'),
+          h('h2', 'text-heading', t('noGenresTitle')),
+          h('p', 'text-body text-muted', t('noGenresBody')),
           backBtn,
         ])]));
         return;
@@ -1259,7 +1434,7 @@
       function paintSave() {
         var left = min - picked.size;
         save.disabled = left > 0;
-        save.textContent = left > 0 ? 'Pick ' + left + ' more' : 'Start watching';
+        save.textContent = left > 0 ? t('pickMore', { n: left }) : t('startWatching');
       }
 
       genres.forEach(function (g) {
@@ -1292,33 +1467,740 @@
           closeOnboarding();
           if (location.hash === '#/onboarding') location.hash = '#/';
         }).catch(function (err) {
-          if (err.status !== 401) message.textContent = 'Could not save your genres. Try again.';
+          if (err.status !== 401) message.textContent = t('saveGenresFailed');
           paintSave();
         });
       });
 
       var later = null;
       if (!due) {
-        later = h('button', 'btn-secondary w-full', 'Not now');
+        later = h('button', 'btn-secondary w-full', t('notNow'));
         later.type = 'button';
         later.addEventListener('click', function () { location.hash = '#/'; });
       }
 
       layer.replaceChildren(onboardingFrame([
-        h('p', 'text-body text-muted', 'Pick at least ' + plural(min, 'genre', 'genres') + '. We use them to suggest series for you.'),
+        h('p', 'text-body text-muted', t('pickAtLeast', { genres: t('genresCount', { n: min }) })),
         picker,
         h('div', 'mt-auto flex flex-col gap-3 pt-4', [message, save, later]),
       ]));
     }).catch(function () {
       if (!layer) return;
-      var retry = h('button', 'btn-primary', 'Retry');
+      var retry = h('button', 'btn-primary', t('retry'));
       retry.type = 'button';
       retry.addEventListener('click', renderOnboarding);
       layer.replaceChildren(onboardingFrame([h('div', 'state-error', [
-        h('h2', 'text-heading', 'Could not load genres'),
-        h('p', 'text-body text-muted', 'Check your connection and try again.'),
+        h('h2', 'text-heading', t('loadGenresFailed')),
+        h('p', 'text-body text-muted', t('checkConnection')),
         retry,
       ])]));
+    });
+  }
+
+  // ── Series manager (admins only) ──────────────────────────────────────
+  // "/admin" lists every series with its published state; "/admin/series/new"
+  // and "/admin/series/<id>" are the series form; "/admin/series/<id>/episodes"
+  // adds episodes in bulk. Who is an admin is the server's call (/api/me says
+  // isAdmin; every /api/admin route checks again). The rules below repeat
+  // lib/admin.ts so most mistakes show before anything is sent; the server's
+  // own field errors land in the same places.
+  var COUNTRY_LABEL = { china: 'China', korea: 'Korea' };
+  var FORMAT_LABEL = { long: 'Long (45-70 min episodes)', short: 'Short (1-3 min episodes)' };
+  var SUBTITLE_LABEL = { en: 'English', id: 'Indonesian', 'zh-Hans': 'Chinese', ko: 'Korean' };
+  var LIMITS = { title: 120, description: 2000, genres: 5, totalEpisodes: 500, yearMin: 1900, yearMax: 2100, rows: 200, durationMax: 6 * 3600 };
+  var LINK_CLS = 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent';
+
+  function isAdmin() { return !!(me && me !== 'guest' && me.isAdmin); }
+
+  function adminBack() { return navLink('/admin', LINK_CLS, 'Manage series'); }
+
+  function notAdminState() {
+    var page = h('div', 'flex flex-col gap-4', [
+      navLink('/', LINK_CLS, 'All series'),
+      h('div', 'state-empty', [
+        h('h1', 'text-heading', 'Only Dtv admins can manage series'),
+        h('p', 'text-body text-muted', 'Ask whoever runs Dtv to add your username to the app’s admin list (the ADMIN_USERNAMES app secret).'),
+      ]),
+    ]);
+    page.dataset.testid = 'admin-required';
+    return page;
+  }
+
+  function isHttpsUrl(v) {
+    try { return new URL(v).protocol === 'https:'; } catch (_) { return false; }
+  }
+
+  /** "45:00", "1:02:30" or plain minutes as seconds; NaN otherwise (same as lib/admin.ts). */
+  function parseDuration(v) {
+    var s = String(v || '').trim(), m;
+    if ((m = /^(\d+):([0-5]\d)$/.exec(s))) return Number(m[1]) * 60 + Number(m[2]);
+    if ((m = /^(\d+):([0-5]\d):([0-5]\d)$/.exec(s))) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    if (/^\d+$/.test(s)) return Number(s) * 60;
+    return NaN;
+  }
+
+  function validateSeriesForm(v, minTotal) {
+    var f = {};
+    if (!v.title) f.title = 'Enter a title.';
+    else if (v.title.length > LIMITS.title) f.title = 'Keep the title to ' + LIMITS.title + ' characters or fewer.';
+    if (v.originalTitle.length > LIMITS.title) f.originalTitle = 'Keep the original title to ' + LIMITS.title + ' characters or fewer.';
+    if (!COUNTRY_LABEL[v.country]) f.country = 'Choose a country.';
+    if (!FORMAT_LABEL[v.format]) f.format = 'Choose a format.';
+    if (!v.genres.length) f.genres = 'Pick at least one genre.';
+    else if (v.genres.length > LIMITS.genres) f.genres = 'Pick up to ' + LIMITS.genres + ' genres.';
+    var year = /^\d+$/.test(v.year) ? Number(v.year) : NaN;
+    if (!v.year) f.year = 'Enter the release year.';
+    else if (!(year >= LIMITS.yearMin && year <= LIMITS.yearMax)) f.year = 'Enter a year from ' + LIMITS.yearMin + ' to ' + LIMITS.yearMax + '.';
+    if (!v.description) f.description = 'Enter a description.';
+    else if (v.description.length > LIMITS.description) f.description = 'Keep the description to ' + LIMITS.description + ' characters or fewer.';
+    var total = /^\d+$/.test(v.totalEpisodes) ? Number(v.totalEpisodes) : NaN;
+    if (!v.totalEpisodes) f.totalEpisodes = 'Enter the total number of episodes.';
+    else if (!(total >= 1 && total <= LIMITS.totalEpisodes)) f.totalEpisodes = 'Enter a whole number from 1 to ' + LIMITS.totalEpisodes + '.';
+    else if (total < minTotal) f.totalEpisodes = 'This series already has ' + minTotal + ' episodes. Enter ' + minTotal + ' or more.';
+    return f;
+  }
+
+  function validateEpisodeRows(rows) {
+    var f = {};
+    if (!rows.length) f.episodes = 'Add at least one episode.';
+    else if (rows.length > LIMITS.rows) f.episodes = 'Add up to ' + LIMITS.rows + ' episodes at a time.';
+    rows.forEach(function (r, i) {
+      var k = 'episodes.' + i + '.';
+      if (!r.videoUrl) f[k + 'videoUrl'] = 'Enter the video URL.';
+      else if (!isHttpsUrl(r.videoUrl)) f[k + 'videoUrl'] = 'Enter a full link starting with https://.';
+      var d = parseDuration(r.duration);
+      if (!r.duration) f[k + 'duration'] = 'Enter the duration.';
+      else if (!(d > 0 && d <= LIMITS.durationMax)) f[k + 'duration'] = 'Enter minutes:seconds, e.g. 45:00.';
+      if (!SUBTITLE_LABEL[r.subtitleLang]) f[k + 'subtitleLang'] = 'Choose a subtitle language.';
+    });
+    return f;
+  }
+
+  var fieldSeq = 0;
+  /**
+   * A labelled control with its own error line. `control` is the input; the
+   * label points at it and the error is announced with it.
+   */
+  function field(label, control, hint) {
+    var id = 'f' + (++fieldSeq);
+    control.id = control.id || id;
+    var err = h('p', 'text-small text-danger');
+    err.id = id + '-error';
+    err.hidden = true;
+    var lab = h('label', 'text-body font-medium', label);
+    lab.htmlFor = control.id;
+    var wrap = h('div', 'flex flex-col gap-1', [lab, hint ? h('p', 'text-small text-muted', hint) : null, control, err]);
+    return {
+      el: wrap,
+      control: control,
+      setError: function (msg) {
+        err.textContent = msg || '';
+        err.hidden = !msg;
+        if (msg) {
+          control.setAttribute('aria-invalid', 'true');
+          control.setAttribute('aria-describedby', err.id);
+        } else {
+          control.removeAttribute('aria-invalid');
+          control.removeAttribute('aria-describedby');
+        }
+      },
+    };
+  }
+
+  function input(type, value, attrs) {
+    var el = h('input', 'field');
+    el.type = type;
+    if (value != null) el.value = String(value);
+    Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  function select(options, value, placeholder) {
+    var el = h('select', 'field');
+    if (placeholder) {
+      var p = h('option', '', placeholder);
+      p.value = '';
+      el.appendChild(p);
+    }
+    Object.keys(options).forEach(function (k) {
+      var o = h('option', '', options[k]);
+      o.value = k;
+      el.appendChild(o);
+    });
+    el.value = value || '';
+    return el;
+  }
+
+  /** Focus the first control that shows an error, so it is not missed below the fold. */
+  function focusFirstError(container) {
+    var bad = container.querySelector('[aria-invalid="true"]');
+    if (bad) { bad.focus({ preventScroll: true }); bad.scrollIntoView({ block: 'center' }); }
+  }
+
+  // Downscale a large photo before it goes to platform storage (5 MB cap).
+  // GIFs go as they are (a canvas would drop the animation).
+  var MAX_SIDE = 2000;
+  function prepareImage(file) {
+    if (file.type === 'image/gif' || !window.createImageBitmap) return Promise.resolve(file);
+    return createImageBitmap(file).then(function (bmp) {
+      var scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+      if (scale === 1 && file.size <= 4.5 * 1024 * 1024) return file;
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(bmp.width * scale);
+      canvas.height = Math.round(bmp.height * scale);
+      canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      return new Promise(function (resolve) {
+        canvas.toBlob(function (blob) {
+          resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', 0.9);
+      });
+    }, function () { return file; });
+  }
+
+  /** Poster or banner: a preview, Upload / Replace and Remove. The URL is in .value(). */
+  function imageUpload(label, url, previewCls, testid) {
+    var current = url || null;
+    var preview = h('div', 'flex items-center justify-center overflow-hidden rounded-lg border border-line bg-raised ' + previewCls);
+    var fileInput = h('input', '');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/png,image/jpeg,image/webp,image/gif';
+    fileInput.hidden = true;
+    var pick = h('button', 'btn-secondary');
+    pick.type = 'button';
+    var remove = h('button', 'btn-secondary', 'Remove');
+    remove.type = 'button';
+    var status = h('p', 'text-small text-muted');
+    status.setAttribute('role', 'status');
+    // The label names the Upload button; the file input itself stays hidden.
+    var f = field(label, pick);
+
+    function paint() {
+      preview.replaceChildren(current
+        ? (function () { var img = h('img', 'h-full w-full object-cover'); img.src = current; img.alt = label + ' preview'; return img; })()
+        : h('span', 'text-small text-muted', 'No image'));
+      pick.textContent = current ? 'Replace' : 'Upload';
+      remove.hidden = !current;
+    }
+    paint();
+    pick.addEventListener('click', function () { fileInput.click(); });
+    remove.addEventListener('click', function () { current = null; f.setError(''); paint(); });
+    fileInput.addEventListener('change', function () {
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+        return f.setError('Choose a PNG, JPEG, WebP or GIF image.');
+      }
+      if (!(window.usernode && window.usernode.uploadFile)) {
+        return f.setError('Uploads only work when Dtv is opened inside Homeroom.');
+      }
+      f.setError('');
+      pick.disabled = true;
+      status.textContent = 'Uploading…';
+      prepareImage(file).then(function (ready) {
+        return window.usernode.uploadFile(ready, { visibility: 'public' });
+      }).then(function (stored) {
+        current = stored.url;
+        status.textContent = '';
+        paint();
+      }).catch(function (err) {
+        status.textContent = '';
+        var code = err && (err.code || err.message);
+        f.setError(code === 'file_too_large' ? 'That image is over 5 MB. Choose a smaller one.'
+          : code === 'invalid_image' ? 'That file is not an image we can use. Choose a PNG, JPEG, WebP or GIF.'
+          : /quota/.test(String(code)) ? 'Storage for this app is full. Remove old images first.'
+          : 'Could not upload the image. Try again.');
+      }).then(function () { pick.disabled = false; });
+    });
+
+    var box = h('div', 'flex items-end gap-3', [preview, h('div', 'flex flex-wrap gap-2', [pick, remove]), fileInput]);
+    f.el.insertBefore(box, f.el.querySelector('p.text-danger'));
+    f.el.appendChild(status);
+    f.el.dataset.testid = testid;
+    return { el: f.el, setError: f.setError, control: pick, value: function () { return current; } };
+  }
+
+  function loadingForm() {
+    var rows = h('div', 'flex flex-col gap-4');
+    for (var i = 0; i < 6; i++) rows.appendChild(h('div', 'flex flex-col gap-1', [h('div', 'skeleton h-5 w-24'), h('div', 'skeleton h-11 w-full')]));
+    return h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-5 w-32'), h('div', 'skeleton h-8 w-48'), rows]);
+  }
+
+  // ── Admin list ──
+  function renderAdminList() {
+    if (!isAdmin()) return show(notAdminState());
+    show(h('div', 'flex flex-col gap-4', [navLink('/', LINK_CLS, 'All series'), loadingList()]));
+    api('/api/admin/series').then(function (data) {
+      var page = h('div', 'flex flex-col gap-4');
+      page.appendChild(navLink('/', LINK_CLS, 'All series'));
+      var add = navLink('/admin/series/new', 'btn-primary', 'Add series');
+      add.dataset.testid = 'admin-add-series';
+      page.appendChild(h('div', 'flex items-center justify-between gap-4', [h('h1', 'text-title', 'Manage series'), add]));
+      page.appendChild(h('p', 'text-body text-muted', 'Viewers only see published series. A series you add starts unpublished.'));
+      if (!data.series.length) {
+        page.appendChild(h('div', 'state-empty', [
+          h('h2', 'text-heading', 'No series yet'),
+          h('p', 'text-body text-muted', 'Add the first series, then its episodes, then publish it.'),
+        ]));
+        return show(page);
+      }
+      var list = h('ul', 'list');
+      list.dataset.testid = 'admin-series-list';
+      data.series.forEach(function (s) {
+        var published = s.isPublished;
+        var badge = h('span', '');
+        var toggle = h('button', 'btn-secondary shrink-0');
+        toggle.type = 'button';
+        var err = h('p', 'text-small text-danger');
+        err.hidden = true;
+        function paint() {
+          badge.className = published ? 'text-small font-medium text-accent' : 'text-small text-muted';
+          badge.textContent = published ? 'Published' : 'Unpublished';
+          toggle.textContent = published ? 'Unpublish' : 'Publish';
+          toggle.setAttribute('aria-label', (published ? 'Unpublish ' : 'Publish ') + s.title);
+        }
+        paint();
+        toggle.addEventListener('click', function () {
+          toggle.disabled = true;
+          err.hidden = true;
+          api('/api/admin/series/' + s.id + '/published', 'PUT', { published: !published }).then(function (r) {
+            published = r.published;
+            paint();
+          }).catch(function (e) {
+            err.textContent = e.status === 400 ? 'Add at least one episode before publishing.' : 'Could not change it. Try again.';
+            err.hidden = false;
+          }).then(function () { toggle.disabled = false; });
+        });
+        var li = h('li', 'list-row flex-wrap', [
+          navLink('/admin/series/' + s.id, 'flex min-w-0 flex-1 flex-col rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
+            h('span', 'truncate text-body font-semibold', s.title),
+            h('span', 'text-small text-muted', [
+              (s.totalEpisodes ? s.episodeCount + ' of ' + plural(s.totalEpisodes, 'episode', 'episodes') : plural(s.episodeCount, 'episode', 'episodes')) +
+                (s.isDemo ? ' · Staging demo' : '') + ' · ',
+              badge,
+            ]),
+          ]),
+          toggle,
+          err,
+        ]);
+        li.dataset.testid = 'admin-series-row';
+        list.appendChild(li);
+      });
+      page.appendChild(list);
+      show(page);
+    }).catch(function (err) {
+      if (err.status === 403 || err.status === 401) return show(notAdminState());
+      show(errorState('Could not load the series list', renderAdminList, navLink('/', LINK_CLS, 'All series')));
+    });
+  }
+
+  // ── Series form (add and edit) ──
+  function renderSeriesForm(id) {
+    if (!isAdmin()) return show(notAdminState());
+    show(loadingForm());
+    var notice = history.state && history.state.notice;
+    Promise.all([
+      api('/api/genres'),
+      id ? api('/api/admin/series/' + id) : Promise.resolve({ series: null }),
+    ]).then(function (res) {
+      var genres = res[0].genres;
+      var s = res[1].series;
+      var minTotal = s ? s.episodes.length : 0;
+
+      var fTitle = field('Title', input('text', s && s.title, { maxlength: String(LIMITS.title), autocomplete: 'off' }));
+      var fOriginal = field('Original title (optional)', input('text', s && s.originalTitle, { maxlength: String(LIMITS.title), placeholder: 'e.g. 灯守之女', autocomplete: 'off' }));
+      var fCountry = field('Country', select(COUNTRY_LABEL, s && s.country, 'Choose a country'));
+      var fFormat = field('Format', select(FORMAT_LABEL, s && s.format, 'Choose a format'));
+
+      var picked = (s && s.genres) ? s.genres.slice() : [];
+      var chips = h('div', 'flex flex-wrap gap-2');
+      chips.setAttribute('role', 'group');
+      chips.dataset.testid = 'admin-genres';
+      genres.forEach(function (g) {
+        var chip = h('button', '', g.name);
+        chip.type = 'button';
+        function paint() {
+          var on = picked.indexOf(g.slug) >= 0;
+          chip.className = on
+            ? 'inline-flex min-h-11 items-center rounded-full border border-accent bg-accent px-4 text-body font-medium text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
+            : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus';
+          chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        paint();
+        chip.addEventListener('click', function () {
+          var i = picked.indexOf(g.slug);
+          if (i >= 0) picked.splice(i, 1); else picked.push(g.slug);
+          paint();
+        });
+        chips.appendChild(chip);
+      });
+      var fGenres = field('Genres', chips, 'The first one you pick is the main genre.');
+      fGenres.el.querySelector('label').htmlFor = '';
+      chips.setAttribute('aria-label', 'Genres');
+      chips.tabIndex = -1;
+      if (!genres.length) chips.appendChild(h('p', 'text-small text-muted', 'There are no genres yet.'));
+
+      var fYear = field('Release year', input('text', s && s.year, { inputmode: 'numeric', placeholder: 'e.g. 2024', autocomplete: 'off' }));
+      var fTotal = field('Total episodes', input('text', s && s.totalEpisodes, { inputmode: 'numeric', placeholder: 'e.g. 36', autocomplete: 'off' }),
+        minTotal ? 'Added so far: ' + plural(minTotal, 'episode', 'episodes') + '.' : null);
+      var desc = h('textarea', 'field');
+      desc.rows = 5;
+      desc.maxLength = LIMITS.description;
+      desc.value = (s && s.description) || '';
+      var fDesc = field('Description', desc);
+      var fPoster = imageUpload('Poster (optional)', s && s.posterUrl, 'aspect-[3/4] w-24', 'admin-poster');
+      var fBanner = imageUpload('Banner (optional)', s && s.bannerUrl, 'aspect-video w-40', 'admin-banner');
+
+      var fields = { title: fTitle, originalTitle: fOriginal, country: fCountry, format: fFormat, genres: fGenres,
+        year: fYear, totalEpisodes: fTotal, description: fDesc, posterUrl: fPoster, bannerUrl: fBanner };
+
+      var save = h('button', 'btn-primary w-full sm:w-auto', s ? 'Save changes' : 'Add series');
+      save.type = 'submit';
+      save.dataset.testid = 'admin-save-series';
+      var formMsg = h('p', 'text-small');
+      formMsg.setAttribute('role', 'status');
+      function setFormMsg(text, isError) {
+        formMsg.className = 'text-small ' + (isError ? 'text-danger' : 'text-muted');
+        formMsg.textContent = text || '';
+      }
+      if (notice) setFormMsg(notice);
+
+      var form = h('form', 'flex flex-col gap-4', [
+        fTitle.el, fOriginal.el,
+        h('div', 'grid gap-4 sm:grid-cols-2', [fCountry.el, fFormat.el]),
+        fGenres.el,
+        h('div', 'grid gap-4 sm:grid-cols-2', [fYear.el, fTotal.el]),
+        fDesc.el, fPoster.el, fBanner.el,
+        h('div', 'flex flex-col gap-2', [save, formMsg]),
+      ]);
+      form.noValidate = true;
+      form.dataset.testid = 'admin-series-form';
+
+      function showErrors(errs) {
+        Object.keys(fields).forEach(function (k) { fields[k].setError(errs[k]); });
+        if (Object.keys(errs).length) {
+          setFormMsg('Fix the ' + (Object.keys(errs).length === 1 ? 'field' : 'fields') + ' marked above.', true);
+          focusFirstError(form);
+        }
+      }
+
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var values = {
+          title: fTitle.control.value.trim(), originalTitle: fOriginal.control.value.trim(),
+          country: fCountry.control.value, format: fFormat.control.value, genres: picked.slice(),
+          year: fYear.control.value.trim(), totalEpisodes: fTotal.control.value.trim(),
+          description: desc.value.trim(), posterUrl: fPoster.value(), bannerUrl: fBanner.value(),
+        };
+        setFormMsg('');
+        var errs = validateSeriesForm(values, minTotal);
+        showErrors(errs);
+        if (Object.keys(errs).length) return;
+        save.disabled = true;
+        api(s ? '/api/admin/series/' + s.id : '/api/admin/series', s ? 'PUT' : 'POST', values).then(function (r) {
+          if (s) {
+            s = r.series;
+            setFormMsg('Changes saved.');
+            save.disabled = false;
+          } else {
+            history.replaceState(null, '', '/admin' + location.search);
+            navigate('/admin/series/' + r.series.id, { notice: 'Series added. Add its episodes, then publish it.' });
+          }
+        }).catch(function (err) {
+          save.disabled = false;
+          if (err.status === 400 && err.body && err.body.fields) showErrors(err.body.fields);
+          else if (err.status === 403) show(notAdminState());
+          else if (err.status === 404) setFormMsg('This series no longer exists.', true);
+          else setFormMsg('Could not save. Your changes are still here. Try again.', true);
+        });
+      });
+
+      var parts = [adminBack(), h('h1', 'text-title', s ? 'Edit series' : 'Add series')];
+      if (s) parts.push(publishSection(s), episodesLink(s));
+      parts.push(form);
+      if (s) parts.push(deleteSection(s));
+      show(h('div', 'flex flex-col gap-6', parts));
+    }).catch(function (err) {
+      if (err.status === 403 || err.status === 401) return show(notAdminState());
+      if (err.status === 404) {
+        return show(h('div', 'state-empty', [
+          h('h2', 'text-heading', 'Series not found'),
+          h('p', 'text-body text-muted', 'It may have been deleted.'),
+          adminBack(),
+        ]));
+      }
+      show(errorState(id ? 'Could not load this series' : 'Could not load the genres', function () { renderSeriesForm(id); }, adminBack()));
+    });
+  }
+
+  function publishSection(s) {
+    var published = s.isPublished;
+    var text = h('p', 'text-body');
+    var btn = h('button', 'btn-secondary shrink-0');
+    btn.type = 'button';
+    btn.dataset.testid = 'admin-publish-toggle';
+    var err = h('p', 'text-small text-danger');
+    err.setAttribute('role', 'alert');
+    err.hidden = true;
+    function paint() {
+      text.replaceChildren(
+        h('span', published ? 'font-semibold text-accent' : 'font-semibold', published ? 'Published' : 'Unpublished'),
+        h('span', 'text-muted', published ? '. Everyone can see it.' : '. Only admins can see it.'));
+      btn.textContent = published ? 'Unpublish' : 'Publish';
+      btn.setAttribute('aria-pressed', published ? 'true' : 'false');
+    }
+    paint();
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      err.hidden = true;
+      api('/api/admin/series/' + s.id + '/published', 'PUT', { published: !published }).then(function (r) {
+        published = s.isPublished = r.published;
+        paint();
+      }).catch(function (e) {
+        err.textContent = (e.body && e.body.fields && e.body.fields.published) || 'Could not change it. Try again.';
+        err.hidden = false;
+      }).then(function () { btn.disabled = false; });
+    });
+    return h('div', 'flex flex-col gap-2', [h('div', 'list-row list', [h('div', 'flex-1', [text]), btn]), err]);
+  }
+
+  function episodesLink(s) {
+    var a = navLink('/admin/series/' + s.id + '/episodes', 'list-row list hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
+      h('span', 'flex-1 text-body font-medium', 'Episodes'),
+      h('span', 'text-small text-muted', s.episodes.length + (s.totalEpisodes ? ' of ' + s.totalEpisodes : '') + ' added'),
+    ]);
+    a.dataset.testid = 'admin-episodes-link';
+    return a;
+  }
+
+  function deleteSection(s) {
+    var box = h('section', 'flex flex-col items-start gap-2 border-t border-line pt-6');
+    var start = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', 'Delete series');
+    start.type = 'button';
+    start.dataset.testid = 'admin-delete-series';
+    var err = h('p', 'text-small text-danger');
+    err.setAttribute('role', 'alert');
+    function idle() { box.replaceChildren(start); }
+    start.addEventListener('click', function () {
+      var confirmBtn = h('button', 'btn-primary bg-danger text-on-danger', 'Delete');
+      confirmBtn.type = 'button';
+      confirmBtn.dataset.testid = 'admin-confirm-delete';
+      var cancel = h('button', 'btn-secondary', 'Cancel');
+      cancel.type = 'button';
+      cancel.addEventListener('click', idle);
+      confirmBtn.addEventListener('click', function () {
+        confirmBtn.disabled = true;
+        err.textContent = '';
+        api('/api/admin/series/' + s.id, 'DELETE').then(function () {
+          navigate('/admin');
+        }).catch(function () {
+          confirmBtn.disabled = false;
+          err.textContent = 'Could not delete it. Try again.';
+        });
+      });
+      box.replaceChildren(
+        h('p', 'text-body', 'Delete “' + s.title + '” and its ' + plural(s.episodes.length, 'episode', 'episodes') + '? Viewers lose their follows and history for it. This cannot be undone.'),
+        h('div', 'flex gap-2', [confirmBtn, cancel]),
+        err);
+      cancel.focus();
+    });
+    idle();
+    return box;
+  }
+
+  // ── Episodes: what is there, and the bulk add form ──
+  function renderEpisodesAdmin(id) {
+    if (!isAdmin()) return show(notAdminState());
+    show(loadingForm());
+    var back = navLink('/admin/series/' + id, LINK_CLS, 'Back to series');
+    api('/api/admin/series/' + id).then(function (data) {
+      var s = data.series;
+      var page = h('div', 'flex flex-col gap-6');
+      var existing = h('section', '');
+      var adder = h('section', '');
+      var notice = h('p', 'text-small text-muted');
+      notice.setAttribute('role', 'status');
+
+      function paintExisting() {
+        existing.replaceChildren(h('h2', 'section-label', 'Added (' + s.episodes.length + (s.totalEpisodes ? ' of ' + s.totalEpisodes : '') + ')'));
+        if (!s.episodes.length) {
+          existing.appendChild(h('p', 'px-1 text-body text-muted', 'No episodes yet. Add them below.'));
+          return;
+        }
+        var list = h('ul', 'list');
+        list.dataset.testid = 'admin-episode-list';
+        s.episodes.forEach(function (e) {
+          var del = h('button', 'btn-secondary shrink-0', 'Delete');
+          del.type = 'button';
+          del.setAttribute('aria-label', 'Delete episode ' + e.number);
+          del.addEventListener('click', function () {
+            del.disabled = true;
+            api('/api/admin/episodes/' + e.id, 'DELETE').then(function () {
+              s.episodes = s.episodes.filter(function (x) { return x.id !== e.id; });
+              notice.textContent = 'Episode ' + e.number + ' deleted.';
+              paintExisting();
+              paintRows();
+            }).catch(function () {
+              del.disabled = false;
+              notice.textContent = 'Could not delete episode ' + e.number + '. Try again.';
+            });
+          });
+          list.appendChild(h('li', 'list-row', [
+            h('span', 'flex min-w-0 flex-1 flex-col', [
+              h('span', 'text-body font-semibold', 'Episode ' + e.number),
+              h('span', 'truncate text-small text-muted', minutes(e.durationSeconds) + ' · ' +
+                (e.subtitleLangs || []).map(function (l) { return SUBTITLE_LABEL[l] || l; }).join(', ') + ' · ' +
+                (e.free ? 'Free' : 'Locked, ' + plural(e.coinPrice, 'coin', 'coins'))),
+            ]),
+            del,
+          ]));
+        });
+        existing.appendChild(list);
+      }
+
+      // Rows of the bulk form. Each new row copies the previous row's
+      // subtitle language; the first three episodes of a series start free.
+      var rows = [];
+      var rowList = h('ol', 'flex flex-col gap-3');
+      rowList.dataset.testid = 'admin-episode-rows';
+      var formErr = h('p', 'text-small text-danger');
+      formErr.setAttribute('role', 'alert');
+      formErr.hidden = true;
+      var submit = h('button', 'btn-primary w-full sm:w-auto');
+      submit.type = 'submit';
+      submit.dataset.testid = 'admin-save-episodes';
+
+      function nextNumber() {
+        return s.episodes.reduce(function (m, e) { return Math.max(m, e.number); }, 0) + 1;
+      }
+
+      function addRow() {
+        var prev = rows[rows.length - 1];
+        var url = input('url', '', { placeholder: 'e.g. https://cdn.example.com/ep1.m3u8', autocomplete: 'off', inputmode: 'url' });
+        var dur = input('text', '', { placeholder: 'e.g. 45:00', autocomplete: 'off' });
+        var lang = select(SUBTITLE_LABEL, prev ? prev.lang.control.value : 'en');
+        var free = h('input', 'h-5 w-5 accent-accent');
+        free.type = 'checkbox';
+        var remove = h('button', 'btn-secondary', 'Remove');
+        remove.type = 'button';
+        var row = {
+          url: field('Video URL', url), dur: field('Duration (min:sec)', dur), lang: field('Subtitle language', lang),
+          free: free, remove: remove, freeTouched: false,
+        };
+        free.addEventListener('change', function () { row.freeTouched = true; });
+        remove.addEventListener('click', function () {
+          rows.splice(rows.indexOf(row), 1);
+          if (!rows.length) addRow(); else paintRows();
+        });
+        var freeLabel = h('label', 'inline-flex min-h-11 items-center gap-2 text-body', [free, 'Free episode']);
+        row.title = h('h3', 'text-body font-semibold');
+        row.el = h('li', 'card flex flex-col gap-3', [
+          row.title,
+          row.url.el,
+          h('div', 'grid gap-3 sm:grid-cols-2', [row.dur.el, row.lang.el]),
+          h('div', 'flex items-center justify-between gap-2', [freeLabel, remove]),
+        ]);
+        rows.push(row);
+        paintRows();
+        return row;
+      }
+
+      function paintRows() {
+        var first = nextNumber();
+        rowList.replaceChildren();
+        rows.forEach(function (r, i) {
+          var n = first + i;
+          r.title.textContent = 'Episode ' + n;
+          if (!r.freeTouched) r.free.checked = n <= 3;
+          r.remove.setAttribute('aria-label', 'Remove episode ' + n + ' row');
+          r.remove.hidden = rows.length === 1;
+          rowList.appendChild(r.el);
+        });
+        submit.textContent = 'Add ' + plural(rows.length, 'episode', 'episodes');
+      }
+
+      var addOne = h('button', 'btn-secondary', 'Add a row');
+      addOne.type = 'button';
+      addOne.addEventListener('click', function () { addRow().url.control.focus(); });
+      var addFive = h('button', 'btn-secondary', 'Add 5 rows');
+      addFive.type = 'button';
+      addFive.addEventListener('click', function () {
+        var r = addRow();
+        for (var i = 0; i < 4; i++) addRow();
+        r.url.control.focus();
+      });
+
+      var form = h('form', 'flex flex-col gap-3', [
+        rowList,
+        h('div', 'flex flex-wrap gap-2', [addOne, addFive]),
+        formErr,
+        submit,
+      ]);
+      form.noValidate = true;
+
+      function showErrors(errs) {
+        rows.forEach(function (r, i) {
+          r.url.setError(errs['episodes.' + i + '.videoUrl']);
+          r.dur.setError(errs['episodes.' + i + '.duration']);
+          r.lang.setError(errs['episodes.' + i + '.subtitleLang']);
+        });
+        var n = Object.keys(errs).length;
+        formErr.textContent = errs.episodes || (n ? 'Fix the ' + (n === 1 ? 'field' : 'fields') + ' marked above.' : '');
+        formErr.hidden = !n;
+        if (n) focusFirstError(form);
+      }
+
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        notice.textContent = '';
+        var values = rows.map(function (r) {
+          return { videoUrl: r.url.control.value.trim(), duration: r.dur.control.value.trim(),
+            subtitleLang: r.lang.control.value, free: r.free.checked };
+        });
+        var errs = validateEpisodeRows(values);
+        if (s.totalEpisodes && s.episodes.length + values.length > s.totalEpisodes && !Object.keys(errs).length) {
+          var room = Math.max(0, s.totalEpisodes - s.episodes.length);
+          errs.episodes = room
+            ? 'This series has ' + s.totalEpisodes + ' episodes planned and ' + s.episodes.length + ' added, so there is room for ' + room + ' more. Remove rows or raise the total episodes.'
+            : 'This series already has all ' + s.totalEpisodes + ' planned episodes. Raise the total episodes to add more.';
+        }
+        showErrors(errs);
+        if (Object.keys(errs).length) return;
+        submit.disabled = true;
+        api('/api/admin/series/' + s.id + '/episodes', 'POST', { episodes: values }).then(function (r) {
+          s = r.series;
+          rows = [];
+          addRow();
+          paintExisting();
+          notice.textContent = plural(r.added, 'episode', 'episodes') + ' added.';
+        }).catch(function (err) {
+          if (err.status === 400 && err.body && err.body.fields) showErrors(err.body.fields);
+          else {
+            formErr.textContent = 'Could not add the episodes. Your rows are still here. Try again.';
+            formErr.hidden = false;
+          }
+        }).then(function () { submit.disabled = false; });
+      });
+
+      adder.appendChild(h('h2', 'section-label', 'Add episodes'));
+      adder.appendChild(form);
+      addRow();
+      paintExisting();
+      page.append(back, h('div', 'flex flex-col gap-1', [
+        h('h1', 'text-title', 'Episodes'),
+        h('p', 'text-body text-muted', s.title + '. Locked episodes cost ' + plural(s.format === 'short' ? 3 : 15, 'coin', 'coins') + ' each.'),
+      ]), notice, existing, adder);
+      show(page);
+    }).catch(function (err) {
+      if (err.status === 403 || err.status === 401) return show(notAdminState());
+      if (err.status === 404) {
+        return show(h('div', 'state-empty', [
+          h('h2', 'text-heading', 'Series not found'),
+          h('p', 'text-body text-muted', 'It may have been deleted.'),
+          adminBack(),
+        ]));
+      }
+      show(errorState('Could not load this series', function () { renderEpisodesAdmin(id); }, back));
     });
   }
 
@@ -1327,6 +2209,7 @@
   // every in-app navigation so a reload still works.
   function navigate(path, state) {
     history.pushState(state || null, '', path + location.search);
+    focusHeading = true;
     route();
   }
 
@@ -1338,6 +2221,7 @@
   });
 
   function route() {
+    endWatching();
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
@@ -1348,16 +2232,82 @@
     else if (location.pathname === '/history') renderHistory();
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
     else if (/^\/my-list\/history\/?$/.test(location.pathname)) renderMyList('history');
+    else if (/^\/admin\/?$/.test(location.pathname)) renderAdminList();
+    else if (/^\/admin\/series\/new\/?$/.test(location.pathname)) renderSeriesForm(null);
+    else if ((m = /^\/admin\/series\/(\d+)\/?$/.exec(location.pathname))) renderSeriesForm(m[1]);
+    else if ((m = /^\/admin\/series\/(\d+)\/episodes\/?$/.exec(location.pathname))) renderEpisodesAdmin(m[1]);
     else renderBrowse();
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();
   }
+  // Strings outside the screens: the skip link.
+  function applyChrome() {
+    var skip = document.getElementById('skip-link');
+    if (skip) skip.textContent = t('skipToContent');
+  }
+
+  // ── Error reports ─────────────────────────────────────────────────────
+  // Uncaught errors in this page go to the server, which passes them to
+  // Sentry (when it is set up). Only for a signed-in person: a guest's write
+  // would be answered with the platform's "make an account" sheet. At most
+  // five a page; the path is sent without its query (the token).
+  var errorBudget = 5;
+  var pendingErrors = [];
+  function sendError(report) {
+    if (me === null) { if (pendingErrors.length < errorBudget) pendingErrors.push(report); return; }
+    if (isGuest() || errorBudget <= 0) return;
+    errorBudget -= 1;
+    api('/api/client-errors', 'POST', report).catch(function () {});
+  }
+  function reportError(err, fallback) {
+    sendError({
+      name: (err && err.name) || 'Error',
+      message: String((err && err.message) || fallback || err).slice(0, 2000),
+      stack: err && err.stack ? String(err.stack).slice(0, 8000) : undefined,
+      path: location.pathname,
+    });
+  }
+  window.addEventListener('error', function (e) { reportError(e.error, e.message); });
+  window.addEventListener('unhandledrejection', function (e) { reportError(e.reason); });
+
+  // Installable and offline-aware: the service worker (public/sw.js) shows
+  // the offline page when there is no connection. Registration can fail in
+  // a third-party frame; the app works the same without it.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    });
+  }
+
+  // Paint a skeleton the moment the app opens, before /api/me answers, so
+  // loading never looks like an empty page. It only picks a shape by path;
+  // route() replaces it as usual once it runs.
+  function bootLoading() {
+    if (/^\/series\/[^/]+\/?$/.test(location.pathname) || /^\/watch\/\d+\/?$/.test(location.pathname)) {
+      show(loadingDetail(), BACK_HOME);
+    } else if (/^\/my-list\/history\/?$/.test(location.pathname)) {
+      show(loadingList(), BACK_HOME);
+    } else if (/^\/my-list\/?$/.test(location.pathname)) {
+      show(posterSkeleton(6), BACK_HOME);
+    } else {
+      show(loadingBrowse());
+    }
+  }
+
   // Ask who is looking first, so the buttons know whether to ask a guest to
-  // make an account and onboarding knows whether it is due.
-  api('/api/me').then(function (data) { me = data; }, function (err) {
-    if (err.status === 401) me = 'guest';
-  }).then(function () {
-    window.addEventListener('popstate', route);
+  // make an account and onboarding knows whether it is due. The language
+  // (which may come from Homeroom) is settled at the same time.
+  bootLoading();
+  var who = api('/api/me').then(function (data) { me = data; }, function (err) {
+    me = err.status === 401 ? 'guest' : false;
+  });
+  Promise.all([who, window.dtvI18n.ready]).then(function () {
+    if (me === false) me = null;
+    var queued = pendingErrors;
+    pendingErrors = [];
+    if (me) queued.forEach(sendError);
+    applyChrome();
+    window.addEventListener('popstate', function () { focusHeading = true; route(); });
     route();
   });
 })();
