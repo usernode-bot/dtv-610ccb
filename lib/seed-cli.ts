@@ -1,9 +1,11 @@
-// `npm run seed`: apply the schema and the demo catalogue to DATABASE_URL.
+// `npm run seed`: apply the schema, the demo catalogue and the drama catalogue
+// (lib/seed-dramas.ts) to DATABASE_URL.
 // Refuses to run against production. Staging runs the same seed on boot.
 
 import { createPool } from './db';
 import { migrate } from './schema';
 import { seedDemoCatalogue } from './seed';
+import { seedDramaCatalogue } from './seed-dramas';
 
 async function main(): Promise<void> {
   if (process.env.USERNODE_ENV === 'production') {
@@ -14,6 +16,7 @@ async function main(): Promise<void> {
   try {
     await migrate(pool);
     await seedDemoCatalogue(pool);
+    await seedDramaCatalogue(pool);
     const { rows } = await pool.query(
       'SELECT (SELECT COUNT(*) FROM series WHERE is_demo)::int AS series, (SELECT COUNT(*) FROM episodes e JOIN series s ON s.id = e.series_id WHERE s.is_demo)::int AS episodes');
     console.log(`Demo catalogue ready: ${rows[0].series} series, ${rows[0].episodes} episodes.`);
