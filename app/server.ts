@@ -6,6 +6,7 @@ import type { Server } from 'http';
 import { createPool } from '../lib/db';
 import { migrate } from '../lib/schema';
 import { seedDemoCatalogue } from '../lib/seed';
+import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
 import { accountRequired, upsertProfileOnce } from '../lib/auth';
@@ -239,8 +240,11 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 async function start(): Promise<void> {
   await migrate(pool);
   // Staging starts with empty tables for anything new, so give the preview a
-  // demo catalogue. Production is never seeded.
-  if (IS_STAGING) await seedDemoCatalogue(pool);
+  // demo catalogue and the placeholder drama catalogue. Production is never seeded.
+  if (IS_STAGING) {
+    await seedDemoCatalogue(pool);
+    await seedDramaCatalogue(pool);
+  }
   server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
