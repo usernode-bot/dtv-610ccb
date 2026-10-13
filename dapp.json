@@ -14,9 +14,10 @@
     },
     {
       "key": "ADMIN_USERNAMES",
-      "description": "Homeroom usernames allowed to add, edit, publish and delete series in Dtv's series manager (/admin), separated by commas, e.g. alice, bob. Leave empty and nobody can manage series.",
+      "description": "Homeroom usernames that get admin access to Dtv (the /admin dashboard and user management) when they sign in, separated by commas, e.g. alice, bob. Admins can also make other people admins from the Users page.",
       "required": false,
-      "private": false
+      "private": false,
+      "default": ""
     }
   ],
   "visibility": {

@@ -105,7 +105,9 @@ authenticated request, a genre onboarding (pick 3 or more, saved to
 and see free episodes; follow, unlock and saving genres answer 401
 `account_required` with an `action`. Episodes are
 free (`coin_price` 0) or locked behind coins; the player, payments and ads come
-later. Content must stay wholesome and neutral (rated None).
+later. Admins (role `admin` on `profiles`, granted on sign-in by the
+`ADMIN_USERNAMES` setting or by another admin) get `/admin`: a dashboard and
+user management. The role and ban are checked server-side on every request. Content must stay wholesome and neutral (rated None).
 
 ## Design
 

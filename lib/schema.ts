@@ -31,6 +31,13 @@ const STATEMENTS: string[] = [
   `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS favorite_genres TEXT[] NOT NULL DEFAULT '{}'`,
   `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ`,
 
+  // Admin access. role is 'user' or 'admin' (ADMIN_USERNAMES grants admin on
+  // sign-in; admins can promote others). A banned person is refused by every
+  // API route.
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'
+     CHECK (role IN ('user', 'admin'))`,
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE`,
+
   `CREATE TABLE IF NOT EXISTS genres (
      id         SERIAL PRIMARY KEY,
      slug       TEXT NOT NULL UNIQUE,
@@ -142,15 +149,27 @@ const STATEMENTS: string[] = [
      END IF;
    END $$`,
   `UPDATE coin_transactions SET type = 'reward'
-    WHERE type NOT IN ('purchase', 'unlock', 'reward', 'ad')`,
+    WHERE type NOT IN ('purchase', 'unlock', 'reward', 'ad', 'admin')`,
+  // 'admin' (a balance adjustment made by an admin, its reason in note) came
+  // later: drop an older check that does not allow it, so it is re-added below.
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'coin_transactions_type_check'
+                   AND conrelid = 'coin_transactions'::regclass
+                   AND pg_get_constraintdef(oid) NOT LIKE '%admin%') THEN
+       ALTER TABLE coin_transactions DROP CONSTRAINT coin_transactions_type_check;
+     END IF;
+   END $$`,
   `DO $$ BEGIN
      IF NOT EXISTS (SELECT 1 FROM pg_constraint
                      WHERE conname = 'coin_transactions_type_check'
                        AND conrelid = 'coin_transactions'::regclass) THEN
        ALTER TABLE coin_transactions ADD CONSTRAINT coin_transactions_type_check
-         CHECK (type IN ('purchase', 'unlock', 'reward', 'ad'));
+         CHECK (type IN ('purchase', 'unlock', 'reward', 'ad', 'admin'));
      END IF;
    END $$`,
+  // Which admin made an 'admin' adjustment.
+  `ALTER TABLE coin_transactions ADD COLUMN IF NOT EXISTS actor_id BIGINT`,
   `CREATE INDEX IF NOT EXISTS coin_transactions_user_idx
      ON coin_transactions (user_id, created_at DESC)`,
 
