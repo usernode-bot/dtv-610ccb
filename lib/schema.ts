@@ -5,7 +5,8 @@
 //
 // Privacy ("Public vs private tables" in the platform conventions):
 //   public  : genres, series, episodes, follows
-//   private : profiles, watch_history, coin_transactions, unlocked_episodes
+//   private : profiles, watch_history, coin_transactions, unlocked_episodes,
+//             analytics_events
 //             (copied schema-only to staging; also marked in dapp.json notes
 //             by the COMMENT statements below). Private tables may point at
 //             public ones; no public table points at a private one, which is
@@ -106,6 +107,9 @@ const STATEMENTS: string[] = [
   // Languages with subtitles, as BCP-47 tags ('en', 'zh-Hans', 'ko').
   `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS subtitle_langs TEXT[] NOT NULL DEFAULT '{}'`,
   `CREATE INDEX IF NOT EXISTS series_country_format_idx ON series (country, format)`,
+  // Only published series show to viewers. Rows from before the series
+  // manager stay published; a series an admin adds starts unpublished.
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT TRUE`,
 
   // Who follows which series. user_id is the platform user id from the token.
   `CREATE TABLE IF NOT EXISTS follows (
@@ -169,6 +173,20 @@ const STATEMENTS: string[] = [
      PRIMARY KEY (user_id, episode_id)
    )`,
 
+  // Product analytics (lib/analytics.ts): play, complete, unlock, purchase and
+  // drop_off. Private, because each row says what one person watched.
+  `CREATE TABLE IF NOT EXISTS analytics_events (
+     id               BIGSERIAL PRIMARY KEY,
+     user_id          BIGINT NOT NULL,
+     name             TEXT NOT NULL CHECK (name IN ('play', 'complete', 'unlock', 'purchase', 'drop_off')),
+     episode_id       INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
+     series_id        INTEGER REFERENCES series(id) ON DELETE SET NULL,
+     position_seconds INTEGER CHECK (position_seconds >= 0),
+     props            JSONB NOT NULL DEFAULT '{}',
+     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   )`,
+  `CREATE INDEX IF NOT EXISTS analytics_events_episode_idx ON analytics_events (episode_id, name)`,
+
   // Carry Phase 0 follows over. The old tables (series_follows, coin_balances,
   // episode_unlocks) are left in place and no longer read.
   `DO $$ BEGIN
@@ -183,6 +201,7 @@ const STATEMENTS: string[] = [
   `COMMENT ON TABLE watch_history IS 'staging:private'`,
   `COMMENT ON TABLE coin_transactions IS 'staging:private'`,
   `COMMENT ON TABLE unlocked_episodes IS 'staging:private'`,
+  `COMMENT ON TABLE analytics_events IS 'staging:private'`,
 ];
 
 /** Create or upgrade every table. Idempotent. */

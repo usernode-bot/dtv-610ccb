@@ -66,15 +66,18 @@ export async function saveFavoriteGenres(
 /**
  * Spend coins to unlock a paid episode: one ledger row and one unlock, in a
  * single transaction. Unlocking a free or already unlocked episode costs
- * nothing. The profile must exist (ensureProfile first).
+ * nothing (spent 0). The profile must exist (ensureProfile first).
  */
 export async function unlockEpisode(
   pool: Pool, userId: number, episodeId: number,
-): Promise<{ coinBalance: number } | 'not_found' | 'not_enough_coins'> {
+): Promise<{ coinBalance: number; spent: number } | 'not_found' | 'not_enough_coins'> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const ep = await client.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
+    const ep = await client.query(
+      `SELECT e.coin_price FROM episodes e
+         JOIN series s ON s.id = e.series_id AND s.is_published
+        WHERE e.id = $1`, [episodeId]);
     if (!ep.rows.length) { await client.query('ROLLBACK'); return 'not_found'; }
     const price: number = ep.rows[0].coin_price;
     const me = await client.query(
@@ -82,7 +85,7 @@ export async function unlockEpisode(
     const balance: number = me.rows[0].coin_balance;
     const have = await client.query(
       'SELECT 1 FROM unlocked_episodes WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
-    if (price === 0 || have.rows.length) { await client.query('COMMIT'); return { coinBalance: balance }; }
+    if (price === 0 || have.rows.length) { await client.query('COMMIT'); return { coinBalance: balance, spent: 0 }; }
     if (balance < price) { await client.query('ROLLBACK'); return 'not_enough_coins'; }
     const tx = await client.query(
       `INSERT INTO coin_transactions (user_id, amount, type, episode_id)
@@ -94,7 +97,7 @@ export async function unlockEpisode(
       'UPDATE profiles SET coin_balance = coin_balance - $2 WHERE id = $1 RETURNING coin_balance',
       [userId, price]);
     await client.query('COMMIT');
-    return { coinBalance: upd.rows[0].coin_balance };
+    return { coinBalance: upd.rows[0].coin_balance, spent: price };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -114,7 +117,7 @@ export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSu
             COUNT(e.id)::int AS episode_count,
             COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count
        FROM follows f
-       JOIN series s ON s.id = f.series_id
+       JOIN series s ON s.id = f.series_id AND s.is_published
        LEFT JOIN episodes e ON e.series_id = s.id
       WHERE f.user_id = $1
       GROUP BY s.id, f.created_at
@@ -146,13 +149,17 @@ export async function listWatchHistory(pool: Pool, userId: number): Promise<Watc
 
 /**
  * Record progress. The profile must exist (ensureProfile first). Returns false
- * when there is no such episode.
+ * when there is no such episode, else whether this save finished the episode
+ * (it was not already marked watched).
  */
 export async function saveProgress(
   pool: Pool, userId: number, episodeId: number, positionSeconds: number, completed: boolean,
-): Promise<boolean> {
+): Promise<false | { newlyCompleted: boolean }> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
+  const prev = await pool.query(
+    'SELECT completed FROM watch_history WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
+  const wasCompleted = prev.rows.length > 0 && prev.rows[0].completed === true;
   const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
@@ -168,7 +175,7 @@ export async function saveProgress(
       `UPDATE series SET view_count = view_count + 1
         WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
   }
-  return true;
+  return { newlyCompleted: completed && !wasCompleted };
 }
 
 /**

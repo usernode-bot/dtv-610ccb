@@ -4,7 +4,21 @@
     "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
-  "secrets": [],
+  "secrets": [
+    {
+      "key": "SENTRY_DSN",
+      "description": "Sentry DSN for error monitoring (Sentry > Project settings > Client Keys (DSN)), like https://<key>@o0.ingest.sentry.io/<project>. Leave unset to turn error reporting off.",
+      "required": false,
+      "private": true,
+      "staging_default": ""
+    },
+    {
+      "key": "ADMIN_USERNAMES",
+      "description": "Homeroom usernames allowed to add, edit, publish and delete series in Dtv's series manager (/admin), separated by commas, e.g. alice, bob. Leave empty and nobody can manage series.",
+      "required": false,
+      "private": false
+    }
+  ],
   "visibility": {
     "build": "public",
     "view": "public"
@@ -14,7 +28,7 @@
       "id": "series.browse",
       "name": "Series browse grid renders",
       "path": "/",
-      "expectSelector": "[data-testid=series-grid]",
+      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile]",
       "visual": true,
       "impact": [
         "public/**",
@@ -64,6 +78,27 @@
       "path": "/",
       "expectSelector": "[data-testid=series-tile] ~ [data-testid=bookmark-button][aria-pressed]",
       "expectText": "My List ("
+    },
+    {
+      "name": "App header shows the Dtv title",
+      "path": "/",
+      "expectSelector": "[data-testid=app-header]",
+      "expectText": "Dtv"
+    },
+    {
+      "id": "header.back",
+      "name": "Series detail header has a back control",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back][href='/']",
+      "visual": true,
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
+      "name": "My List header has a back control",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back]"
     },
     {
       "id": "series.detail",
@@ -130,12 +165,65 @@
       "name": "Browse links to My List",
       "path": "/",
       "expectSelector": "[data-testid=my-list-link]"
+    },
+    {
+      "id": "seo.series-meta",
+      "name": "Series page has its own title, description and Open Graph tags",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "meta[property=\"og:title\"][content^=\"Bakery on Maple Street\"]",
+      "expectText": "Watch now"
+    },
+    {
+      "name": "Page links the web manifest",
+      "path": "/",
+      "expectSelector": "link[rel=manifest][href=\"/manifest.webmanifest\"]"
+    },
+    {
+      "name": "Offline page renders",
+      "path": "/offline.html",
+      "expectText": "You are offline"
+    },
+    {
+      "name": "robots.txt points at the sitemap",
+      "path": "/robots.txt",
+      "expectText": "sitemap.xml"
+    },
+    {
+      "id": "browse.language",
+      "name": "Browse offers English and Indonesian",
+      "path": "/",
+      "expectSelector": "[data-testid=language-select] option[value=id]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "id": "admin.not-admin",
+      "name": "Series manager refuses a non-admin",
+      "path": "/admin",
+      "expectSelector": "[data-testid=admin-required]",
+      "expectText": "Only Dtv admins can manage series",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Skip link leads to the content",
+      "path": "/my-list",
+      "expectSelector": "a#skip-link[href=\"#app\"]"
     }
   ],
   "private_tables": [
     "profiles",
     "watch_history",
     "coin_transactions",
-    "unlocked_episodes"
+    "unlocked_episodes",
+    "analytics_events"
   ]
 }

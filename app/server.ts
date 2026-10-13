@@ -1,5 +1,7 @@
 import express from 'express';
 import type { Request } from 'express';
+import compression from 'compression';
+import fs from 'fs';
 import path from 'path';
 import jwt from 'jsonwebtoken';
 import type { Server } from 'http';
@@ -9,10 +11,22 @@ import { seedDemoCatalogue } from '../lib/seed';
 import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
-import { accountRequired, upsertProfileOnce } from '../lib/auth';
+import { adminRouter } from './routes/admin';
+import { accountRequired, requireUser, upsertProfileOnce, userId } from '../lib/auth';
+import { rateLimit } from '../lib/rate-limit';
+import { monitor } from '../lib/monitoring';
+import { SwrCache } from '../lib/cache';
+import {
+  injectHead, loadSeriesMeta, metaForPath, publicOrigin, renderHead, robotsTxt, sitemapXml,
+  type SeriesMetaRow,
+} from '../lib/seo';
 
 // Compiled to dist/app/server.js, so public/ is two levels up.
 const PUBLIC_DIR = path.resolve(__dirname, '..', '..', 'public');
+// The app icon (brand/icon.png) is also the install icon for the web manifest.
+const BRAND_DIR = path.resolve(__dirname, '..', '..', 'brand');
+// The page shell, read once: every page load gets it with its own <head> tags.
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -48,6 +62,8 @@ const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
 // Everything else requires a valid platform-issued JWT.
 const PUBLIC_API_PATHS = new Set(['/health']);
 
+// gzip every text answer (pages, scripts, the stylesheet, JSON).
+app.use(compression());
 app.use(express.json());
 
 // The platform's three centrally hosted files — the bridge, the native UI
@@ -162,13 +178,33 @@ let shuttingDown = false;
 app.get('/health', (_req, res) =>
   shuttingDown ? res.status(503).json({ status: 'shutting_down' }) : res.json({ status: 'ok' }));
 
+// Each person (or, signed out, each address) gets a budget of API calls per
+// minute; past it the API answers 429 rate_limited. See lib/rate-limit.ts.
+app.use('/api', rateLimit());
+
 // A signed-in person gets a profiles row on their first authenticated request.
 app.use(upsertProfileOnce(pool));
+
+// The page reports its own uncaught errors here; they go on to Sentry when
+// SENTRY_DSN is set (lib/monitoring.ts). Only the path is kept, never the
+// query string, which carries the platform token.
+app.post('/api/client-errors', requireUser, (req, res) => {
+  const b = req.body || {};
+  const str = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const message = str(b.message, 2000);
+  if (!message) return void res.status(400).json({ error: 'invalid_error' });
+  monitor.captureException(
+    { name: str(b.name, 200) || 'Error', message, stack: str(b.stack, 8000) || undefined },
+    { platform: 'javascript', userId: userId(req), url: str(b.path, 512).split('?')[0], tags: { source: 'page' } });
+  res.status(202).json({ reported: monitor.enabled });
+});
 
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.
 app.use('/api/me', meRouter(pool));
-app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
+// The series manager: admins only (ADMIN_USERNAMES).
+app.use('/api/admin', adminRouter(pool));
+app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING, cacheMs: 30_000 }));
 
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
@@ -177,7 +213,51 @@ app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-app.use(express.static(PUBLIC_DIR));
+// Install icon for the web manifest and the home-screen bookmark.
+app.get('/icons/icon-512.png', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(path.join(BRAND_DIR, 'icon.png'));
+});
+
+// Search engines: robots.txt and a sitemap of every series page (cached for
+// ten minutes and rebuilt in the background).
+const sitemapCache = new SwrCache<string>(10 * 60_000);
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(robotsTxt(publicOrigin(req)));
+});
+app.get('/sitemap.xml', async (req, res) => {
+  const origin = publicOrigin(req);
+  if (!origin) return void res.status(400).type('text/plain').send('Unknown host');
+  try {
+    res.type('application/xml').send(await sitemapCache.get(origin, () => sitemapXml(pool, origin)));
+  } catch (err) {
+    console.error(err);
+    monitor.captureException(err, { method: 'GET', url: '/sitemap.xml' });
+    res.status(500).type('text/plain').send('Could not build the sitemap');
+  }
+});
+
+// index: false so "/" is served by the page handler below, with its <head>.
+app.use(express.static(PUBLIC_DIR, {
+  index: false,
+  setHeaders(res, file) {
+    // The service worker must always be checked for an update.
+    if (file.endsWith('sw.js')) res.set('Cache-Control', 'no-cache');
+  },
+}));
+
+// The <head> tags for the page at a path: a series page names its series.
+const seriesMetaCache = new SwrCache<SeriesMetaRow | null>(60_000);
+async function headFor(req: Request): Promise<string> {
+  const m = /^\/series\/([^/]+)\/?$/.exec(req.path);
+  let series: SeriesMetaRow | null = null;
+  if (m) {
+    let slug = '';
+    try { slug = decodeURIComponent(m[1]); } catch {}
+    if (slug) series = await seriesMetaCache.get(slug, () => loadSeriesMeta(pool, slug)).catch(() => null);
+  }
+  return renderHead(metaForPath(req.path, series), publicOrigin(req));
+}
 
 // The HLS player for browsers that cannot play HLS natively (most besides
 // Safari). The watch screen loads it only when it needs it.
@@ -192,7 +272,8 @@ app.get('/vendor/hls.min.js', (_req, res) => res.sendFile(HLS_JS));
 // without Sec-Fetch-*) gets the "open in Homeroom" landing page instead
 // of a redirect, so the platform shell is never loaded INSIDE its own
 // app iframe and stray visits still don't reveal the app.
-app.get('*', (req, res) => {
+app.get('*', async (req, res) => {
+  const head = await headFor(req);
   if (!req.user && !req.guest) {
     // Deep-link pass-through (platform #743): carry the visited
     // path+query into the chromeless view so share links land on the
@@ -207,7 +288,8 @@ app.get('*', (req, res) => {
     if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
       return res.redirect(302, PLATFORM_ORIGIN + '/app/dtv-610ccb/full' + deepPath);
     }
-    return res.status(401).send(`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
+    return res.status(401).send(`<!doctype html><meta charset=utf-8>
+${head.replace(/<title>[^<]*<\/title>/, '<title>Open in Homeroom</title>')}
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Homeroom</h1>
@@ -216,7 +298,7 @@ app.get('*', (req, res) => {
   </div>
 </body>`);
   }
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  res.type('html').send(injectHead(INDEX_HTML, head));
 });
 
 const DRAIN_MS = 3000;
@@ -239,6 +321,17 @@ async function shutdown(signal: string): Promise<void> {
   }
   process.exit(0);
 }
+// Report what would otherwise only reach the log. An uncaught exception
+// still ends the process, after a moment for the report to go out.
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandled rejection', reason);
+  monitor.captureException(reason, { tags: { source: 'unhandledRejection' } });
+});
+process.on('uncaughtException', (err) => {
+  console.error(err);
+  monitor.captureException(err, { tags: { source: 'uncaughtException' } });
+  setTimeout(() => process.exit(1), 1000).unref();
+});
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 

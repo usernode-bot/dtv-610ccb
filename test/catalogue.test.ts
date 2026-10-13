@@ -105,8 +105,9 @@ test('follows, unlocks and watch history are per person; locked streams stay hid
     assert.ok((await listEpisodes(pool, slug, A))![3].videoUrl);
     assert.strictEqual((await listEpisodes(pool, slug, B))![3].state, 'locked');
 
-    assert.strictEqual(await saveProgress(pool, A, eps[0].id, 42, false), true);
-    assert.strictEqual(await saveProgress(pool, A, eps[0].id, 90, true), true);
+    assert.deepStrictEqual(await saveProgress(pool, A, eps[0].id, 42, false), { newlyCompleted: false });
+    assert.deepStrictEqual(await saveProgress(pool, A, eps[0].id, 90, true), { newlyCompleted: true });
+    assert.deepStrictEqual(await saveProgress(pool, A, eps[0].id, 90, true), { newlyCompleted: false });
     assert.strictEqual(await saveProgress(pool, A, 999999999, 1, false), false);
     const h = await listWatchHistory(pool, A);
     assert.strictEqual(h.length, 1);
@@ -245,9 +246,9 @@ test('onboarding: favourite genres are validated and saved; unlock spends coins 
     assert.strictEqual(await unlockEpisode(pool, A, locked.id), 'not_enough_coins');
     assert.strictEqual(await unlockEpisode(pool, A, 999999999), 'not_found');
     await pool.query('UPDATE profiles SET coin_balance = 25 WHERE id = $1', [A]);
-    assert.deepStrictEqual(await unlockEpisode(pool, A, locked.id), { coinBalance: 25 - locked.coinPrice });
-    assert.deepStrictEqual(await unlockEpisode(pool, A, locked.id), { coinBalance: 25 - locked.coinPrice });
-    assert.deepStrictEqual(await unlockEpisode(pool, A, eps[0].id), { coinBalance: 25 - locked.coinPrice });
+    assert.deepStrictEqual(await unlockEpisode(pool, A, locked.id), { coinBalance: 25 - locked.coinPrice, spent: locked.coinPrice });
+    assert.deepStrictEqual(await unlockEpisode(pool, A, locked.id), { coinBalance: 25 - locked.coinPrice, spent: 0 });
+    assert.deepStrictEqual(await unlockEpisode(pool, A, eps[0].id), { coinBalance: 25 - locked.coinPrice, spent: 0 });
     assert.strictEqual((await listEpisodes(pool, DEMO_SERIES[0].slug, A))![3].state, 'unlocked');
     const ledger = await pool.query('SELECT amount, type FROM coin_transactions WHERE user_id = $1', [A]);
     assert.deepStrictEqual(ledger.rows, [{ amount: -locked.coinPrice, type: 'unlock' }]);

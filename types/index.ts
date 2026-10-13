@@ -111,3 +111,21 @@ export interface AuthUser {
   locale: string | null;
   pur: string;
 }
+
+/** One episode's row in a series' drop-off report (aggregates only, no people). */
+export interface EpisodeDropOff {
+  episodeId: number;
+  number: number;
+  /** People who played it. */
+  viewers: number;
+  /** People who watched to the end. */
+  completed: number;
+  /** People who left it before the end. */
+  dropped: number;
+  /** dropped / viewers, 0..1 (0 with no viewers). */
+  dropOffRate: number;
+  /** Average point people left at, or null when nobody has. */
+  averageDropPositionSeconds: number | null;
+  /** viewers / viewers of the first episode, 0..1. */
+  retentionFromFirst: number;
+}
