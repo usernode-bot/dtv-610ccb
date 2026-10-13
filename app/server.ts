@@ -8,8 +8,10 @@ import type { Server } from 'http';
 import { createPool } from '../lib/db';
 import { migrate } from '../lib/schema';
 import { seedDemoCatalogue } from '../lib/seed';
+import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
+import { adminRouter } from './routes/admin';
 import { accountRequired, requireUser, upsertProfileOnce, userId } from '../lib/auth';
 import { rateLimit } from '../lib/rate-limit';
 import { monitor } from '../lib/monitoring';
@@ -200,6 +202,8 @@ app.post('/api/client-errors', requireUser, (req, res) => {
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.
 app.use('/api/me', meRouter(pool));
+// The series manager: admins only (ADMIN_USERNAMES).
+app.use('/api/admin', adminRouter(pool));
 app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING, cacheMs: 30_000 }));
 
 // The template ships no favicon file; index.html carries an inline SVG
@@ -329,8 +333,11 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 async function start(): Promise<void> {
   await migrate(pool);
   // Staging starts with empty tables for anything new, so give the preview a
-  // demo catalogue. Production is never seeded.
-  if (IS_STAGING) await seedDemoCatalogue(pool);
+  // demo catalogue and the placeholder drama catalogue. Production is never seeded.
+  if (IS_STAGING) {
+    await seedDemoCatalogue(pool);
+    await seedDramaCatalogue(pool);
+  }
   server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;

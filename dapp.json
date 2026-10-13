@@ -11,6 +11,12 @@
       "required": false,
       "private": true,
       "staging_default": ""
+    },
+    {
+      "key": "ADMIN_USERNAMES",
+      "description": "Homeroom usernames allowed to add, edit, publish and delete series in Dtv's series manager (/admin), separated by commas, e.g. alice, bob. Leave empty and nobody can manage series.",
+      "required": false,
+      "private": false
     }
   ],
   "visibility": {
@@ -22,13 +28,34 @@
       "id": "series.browse",
       "name": "Series browse grid renders",
       "path": "/",
-      "expectSelector": "[data-testid=series-grid]",
+      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile]",
       "visual": true,
       "impact": [
         "public/**",
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "name": "App header shows the Dtv title",
+      "path": "/",
+      "expectSelector": "[data-testid=app-header]",
+      "expectText": "Dtv"
+    },
+    {
+      "id": "header.back",
+      "name": "Series detail header has a back control",
+      "path": "/series/bakery-on-maple-street",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back][href='/']",
+      "visual": true,
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
+      "name": "My List header has a back control",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=app-header] [data-testid=header-back]"
     },
     {
       "id": "series.detail",
@@ -123,6 +150,19 @@
       "name": "Browse offers English and Indonesian",
       "path": "/",
       "expectSelector": "[data-testid=language-select] option[value=id]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "id": "admin.not-admin",
+      "name": "Series manager refuses a non-admin",
+      "path": "/admin",
+      "expectSelector": "[data-testid=admin-required]",
+      "expectText": "Only Dtv admins can manage series",
       "visual": true,
       "impact": [
         "public/**",

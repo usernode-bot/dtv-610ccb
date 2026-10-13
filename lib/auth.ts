@@ -17,6 +17,7 @@ const ACCOUNT_ACTIONS: Array<[RegExp, string]> = [
   [/^\/api\/episodes\/[^/]+\/unlock$/, 'unlock an episode'],
   [/^\/api\/me\/genres$/, 'save your favourite genres'],
   [/^\/api\/me\/watch-history\/[^/]+\/play$/, 'keep a watch history'],
+  [/^\/api\/admin\//, 'manage series'],
 ];
 
 /** The `account_required` answer for a request a guest may not make. */
