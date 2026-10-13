@@ -4,6 +4,7 @@
 import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
+import { trackEvent } from '../../lib/analytics';
 import { isAdmin } from '../../lib/admin';
 import {
   ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory,
@@ -50,8 +51,11 @@ export function meRouter(pool: Pool): express.Router {
       return void res.status(400).json({ error: 'invalid_progress' });
     }
     await ensureProfile(pool, userId(req)!, String(req.user!.username));
-    const ok = await saveProgress(pool, userId(req)!, episodeId, position, req.body?.completed === true);
-    if (!ok) return void res.status(404).json({ error: 'not_found' });
+    const saved = await saveProgress(pool, userId(req)!, episodeId, position, req.body?.completed === true);
+    if (!saved) return void res.status(404).json({ error: 'not_found' });
+    if (saved.newlyCompleted) {
+      await trackEvent(pool, { userId: userId(req)!, name: 'complete', episodeId, positionSeconds: position });
+    }
     res.json({ saved: true });
   }));
 
@@ -63,6 +67,7 @@ export function meRouter(pool: Pool): express.Router {
     const result = await recordPlay(pool, userId(req)!, episodeId);
     if (result === 'not_found') return void res.status(404).json({ error: 'not_found' });
     if (result === 'locked') return void res.status(403).json({ error: 'locked' });
+    await trackEvent(pool, { userId: userId(req)!, name: 'play', episodeId });
     res.json({ saved: true });
   }));
 

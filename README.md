@@ -9,6 +9,11 @@ opened, most recent first), plain JS in `public/`. Episodes link to `/watch/<epi
 placeholder until the player lands; locked episodes call `window.dtv.openUnlockSheet`
 (a stub until the unlock sheet lands). There is no player, payment or ad support yet.
 
+The app is installable (`public/manifest.webmanifest`, `public/sw.js`, offline page `public/offline.html`),
+in English and Indonesian (`public/js/i18n.js`; a Language menu at the bottom of the series screen), and
+each page gets its own title, description and Open Graph tags from the server. `/sitemap.xml` lists every
+series page and `/robots.txt` points at it.
+
 ## Series manager (admins)
 
 `/admin` lets app admins add, edit, publish/unpublish and delete series, and add episodes in bulk
@@ -28,7 +33,10 @@ API (admins only, 403 `admin_required` otherwise): `GET|POST /api/admin/series`,
 ## Layout
 
 - `app/`: the Express server (`server.ts`: platform auth, boot, graceful shutdown) and `app/routes/`.
-- `lib/`: the pg pool (`db.ts`), schema (`schema.ts`), queries (`catalogue.ts`, `me.ts`), demo seed (`seed.ts`, `seed-cli.ts`).
+- `lib/`: the pg pool (`db.ts`), schema (`schema.ts`), queries (`catalogue.ts`, `me.ts`), demo seed (`seed.ts`, `seed-cli.ts`),
+  analytics (`analytics.ts`), the guest catalogue cache (`cache.ts`), rate limiting (`rate-limit.ts`),
+  Sentry reporting (`monitoring.ts`) and page metadata, robots and sitemap (`seo.ts`).
+- `scripts/bundle-report.js`: bundle analysis (`npm run analyze`).
 - `types/`: shared API types and the Express request augmentation.
 - `components/`, `hooks/`: reserved for the UI; empty for now.
 - `public/`: the current browse and detail screens. `styles/` and `tailwind.config.js`: Tailwind.
@@ -48,6 +56,7 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
 | `coin_transactions` | private | `id`, `user_id`, `amount` (+ earns, - spends), `type` (`purchase` / `unlock` / `reward` / `ad`), `episode_id`, `note`, `created_at` |
 | `unlocked_episodes` | private | `user_id` -> profiles, `episode_id` -> episodes, `coin_transaction_id`, `unlocked_at` |
+| `analytics_events` | private | `id`, `user_id`, `name` (`play` / `complete` / `unlock` / `purchase` / `drop_off`), `episode_id`, `series_id`, `position_seconds`, `props` (JSON), `created_at` |
 
 The drama columns are nullable (older rows have none). `country`, `format`, `status`, `release_year`,
 `total_episodes` and `rating` are checked by constraints. Formats: `long` is 16-40 episodes of 45-70 min
@@ -66,7 +75,25 @@ Public (guests may read): `GET /api/genres`, `GET /api/series[?genre=<slug>]`, `
 Needs the platform token (signed-in only, own rows only): `PUT|DELETE /api/series/:slug/follow`,
 `GET /api/me`, `GET /api/me/follows`, `GET|PUT /api/me/watch-history[/:episodeId]`,
 `POST /api/me/watch-history/:episodeId/play` (the watch screen records an opened free or unlocked episode),
-`GET /api/me/unlocked`, `GET /api/me/coin-transactions`.
+`GET /api/me/unlocked`, `GET /api/me/coin-transactions`, `POST /api/events` (the page reports `drop_off`:
+`{ name, episodeId, positionSeconds }`), `POST /api/client-errors` (the page's uncaught errors, passed to Sentry).
+
+Also public: `GET /api/series/:slug/drop-off`, per-episode viewers, completions, drop-offs and retention
+(counts only). The guest view of the catalogue is cached in memory for 30 seconds and refreshed in the
+background; a signed-in person's view is always live.
+
+## Analytics, monitoring and limits
+
+- **Analytics** (`analytics_events`): the server records `play` (the watch screen opened an episode),
+  `complete` (progress saved as finished, once), `unlock` (coins spent) and is ready to record `purchase`
+  when coin purchases exist (`trackEvent` in `lib/analytics.ts`); the page records `drop_off` when someone
+  leaves a playable episode before the end. A player reports its position with `window.dtv.reportPlayback(seconds, completed)`.
+- **Errors**: set the private secret `SENTRY_DSN` to send server errors and the page's uncaught errors to
+  Sentry. Unset (and always in staging) nothing is sent.
+- **Rate limits**: per person (or address, signed out) per minute, 300 reads and 60 writes on `/api`;
+  past that the API answers 429 `rate_limited` with `Retry-After`.
+- **Bundle size**: `npm run analyze` lists every file the page downloads, raw and gzipped, against a
+  budget per kind (`-- --check` exits 1 when one is over).
 
 ## Demo data and the seed
 

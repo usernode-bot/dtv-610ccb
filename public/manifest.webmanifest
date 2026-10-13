@@ -1,0 +1,18 @@
+{
+  "name": "Dtv",
+  "short_name": "Dtv",
+  "description": "Watch movies and dramas together with the group.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0a09",
+  "theme_color": "#0f766e",
+  "lang": "en",
+  "categories": ["entertainment"],
+  "icons": [
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

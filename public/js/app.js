@@ -12,6 +12,8 @@
 // chevron for the current screen (setHeader per route); leaving the app is
 // the Homeroom frame's job, not the header's. Class names are whole literals
 // so the Tailwind build can see them.
+// Every string a person reads comes from public/js/i18n.js (t(key)), in
+// English or Indonesian.
 //
 // @typedef {{id:number, slug:string, title:string, genre:string, coverUrl:string|null,
 //   coverTone:number, episodeCount:number, freeEpisodeCount:number, following:boolean}} SeriesSummary
@@ -21,6 +23,7 @@
 
 (function () {
   var root = document.getElementById('app');
+  var t = window.dtvI18n.t;
 
   // Neutral placeholder cover tints (colour tokens only), indexed by coverTone.
   var TONES = ['bg-accent/15', 'bg-raised', 'bg-accent/30', 'bg-line', 'bg-accent/20'];
@@ -76,7 +79,8 @@
     return el;
   }
 
-  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function episodesCount(n) { return t('episodesCount', { n: n }); }
+  function coinsCount(n) { return t('coinsCount', { n: n }); }
 
   function minutes(seconds) {
     var m = Math.floor(seconds / 60), s = seconds % 60;
@@ -123,22 +127,42 @@
   }
 
   function compact(n) {
-    try { return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(n); }
+    try { return new Intl.NumberFormat(window.dtvI18n.locale(), { notation: 'compact' }).format(n); }
     catch (_) { return String(n); }
   }
 
-  /** Cover art: the image when there is one, else a tinted tile with the title's initial. */
-  function cover(s, sizeCls, letterCls) {
+  /**
+   * Cover art: the image when there is one, else a tinted tile with the
+   * title's initial. Grid covers load lazily; the detail banner (priority)
+   * loads first. The box keeps its size, so nothing shifts as images arrive.
+   */
+  function cover(s, sizeCls, letterCls, priority) {
     var box = h('div', 'flex items-center justify-center overflow-hidden ' + sizeCls + ' ' + (TONES[s.coverTone % TONES.length] || TONES[0]));
     if (s.coverUrl) {
       var img = h('img', 'h-full w-full object-cover');
-      img.src = s.coverUrl;
       img.alt = '';
+      img.decoding = 'async';
+      if (priority) img.setAttribute('fetchpriority', 'high');
+      else img.loading = 'lazy';
+      img.src = s.coverUrl;
       box.appendChild(img);
     } else {
       box.appendChild(h('span', letterCls, s.title.charAt(0)));
     }
     return box;
+  }
+
+  // Set by an in-app navigation: once the new screen's heading is on
+  // screen, move keyboard and screen reader focus to it.
+  var focusHeading = false;
+
+  function setTitle(title) {
+    document.title = title ? title + ' | Dtv' : 'Dtv';
+  }
+
+  function loadingNode(node) {
+    node.dataset.loading = '1';
+    return node;
   }
 
   // Poster grids: 2 columns on a phone, 3 on a large phone or small tablet,
@@ -156,7 +180,7 @@
         h('div', 'skeleton h-4 w-1/2'),
       ]));
     }
-    return grid;
+    return loadingNode(grid);
   }
 
   // ── App header ────────────────────────────────────────────────────────
@@ -181,34 +205,45 @@
     headerBar.replaceChildren.apply(headerBar, children);
   }
 
+  /** Put a screen in place. Loading screens are marked data-loading. */
   function show(node, back) {
     setHeader(back || null);
     root.replaceChildren(node);
     window.scrollTo(0, 0);
+    var loading = node.dataset && node.dataset.loading === '1';
+    root.setAttribute('aria-busy', loading ? 'true' : 'false');
+    if (!loading && focusHeading) {
+      var heading = root.querySelector('h1, h2');
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+        focusHeading = false;
+      }
+    }
   }
 
   // ── States ────────────────────────────────────────────────────────────
   function loadingBrowse() {
-    return h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), posterSkeleton(12)]);
+    return loadingNode(h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), posterSkeleton(12)]));
   }
 
   function loadingDetail() {
-    return h('div', 'flex flex-col gap-4', [
+    return loadingNode(h('div', 'flex flex-col gap-4', [
       h('div', 'skeleton h-40 w-full sm:h-56'),
       h('div', 'skeleton h-8 w-2/3'),
       h('div', 'skeleton h-16 w-full'),
       h('div', 'skeleton h-11 w-full'),
       h('div', 'skeleton h-48 w-full'),
-    ]);
+    ]));
   }
 
   function errorState(message, retry) {
-    var retryBtn = h('button', 'btn-primary', 'Retry');
+    var retryBtn = h('button', 'btn-primary', t('retry'));
     retryBtn.type = 'button';
     retryBtn.addEventListener('click', retry);
     return h('div', 'state-error', [
       h('h2', 'text-heading', message),
-      h('p', 'text-body text-muted', 'Check your connection and try again.'),
+      h('p', 'text-body text-muted', t('checkConnection')),
       retryBtn,
     ]);
   }
@@ -219,8 +254,8 @@
       cover(s, 'aspect-[3/4] w-full rounded-xl border border-line', 'text-title text-fg'),
       h('div', 'flex flex-col', [
         h('h2', 'text-body font-semibold', s.title),
-        h('p', 'text-small text-muted', plural(s.episodeCount, 'episode', 'episodes') + (s.genre ? ' · ' + s.genre : '')),
-        s.following ? h('p', 'text-small font-medium text-accent', 'Following') : null,
+        h('p', 'text-small text-muted', episodesCount(s.episodeCount) + (s.genre ? ' · ' + s.genre : '')),
+        s.following ? h('p', 'text-small font-medium text-accent', t('following')) : null,
       ]),
     ]);
     a.dataset.testid = 'series-tile';
@@ -228,20 +263,21 @@
   }
 
   function renderBrowse() {
+    setTitle('');
     show(loadingBrowse());
     api('/api/series').then(function (data) {
       var page = h('div', 'flex flex-col gap-4');
       page.appendChild(h('div', 'flex items-center justify-between gap-4', [
-        h('h1', 'text-title', 'Series'),
+        h('h1', 'text-title', t('series')),
         h('div', 'flex items-center gap-4', [adminLink(), myListLink()]),
       ]));
       if (data.demo) {
-        page.appendChild(h('p', 'text-small text-muted', 'Staging demo catalogue: these series are made up for testing.'));
+        page.appendChild(h('p', 'text-small text-muted', t('stagingDemo')));
       }
       if (!data.series.length) {
         page.appendChild(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'No series yet'),
-          h('p', 'text-body text-muted', 'New series will appear here as soon as they are added.'),
+          h('h2', 'text-heading', t('noSeriesTitle')),
+          h('p', 'text-body text-muted', t('noSeriesBody')),
         ]));
       } else {
         var grid = h('div', POSTER_GRID);
@@ -249,10 +285,40 @@
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
         page.appendChild(grid);
       }
+      page.appendChild(languagePicker());
       show(page);
+      if (refocusLanguage) {
+        refocusLanguage = false;
+        document.getElementById('language-select').focus();
+      }
     }).catch(function () {
-      show(errorState('Could not load series', renderBrowse));
+      show(errorState(t('loadSeriesFailed'), renderBrowse));
     });
+  }
+
+  // Language: English or Bahasa Indonesia. Starts from the Homeroom or device
+  // language (public/js/i18n.js); a choice here is kept on this device.
+  var refocusLanguage = false;
+  function languagePicker() {
+    var select = h('select', 'field w-auto');
+    select.id = 'language-select';
+    select.dataset.testid = 'language-select';
+    window.dtvI18n.locales.forEach(function (l) {
+      var o = h('option', '', l.name);
+      o.value = l.code;
+      o.lang = l.code;
+      if (l.code === window.dtvI18n.locale()) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', function () {
+      window.dtvI18n.setLocale(select.value);
+      applyChrome();
+      refocusLanguage = true;
+      route();
+    });
+    var label = h('label', 'text-small text-muted', t('language'));
+    label.htmlFor = select.id;
+    return h('div', 'mt-4 flex items-center gap-3 border-t border-line pt-4', [label, select]);
   }
 
   /** "Manage series", for admins only. */
@@ -264,7 +330,7 @@
   }
 
   function myListLink() {
-    var a = navLink('/my-list', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'My List');
+    var a = navLink('/my-list', 'inline-flex min-h-11 items-center text-body font-medium text-accent', t('myList'));
     a.dataset.testid = 'my-list-link';
     return a;
   }
@@ -280,12 +346,12 @@
   }
 
   function historyRow(item) {
-    var progress = item.completed ? 'Watched'
-      : item.positionSeconds > 0 ? 'Stopped at ' + minutes(item.positionSeconds) : 'Started';
+    var progress = item.completed ? t('watched')
+      : item.positionSeconds > 0 ? t('stoppedAt', { time: minutes(item.positionSeconds) }) : t('started');
     var a = navLink('/watch/' + item.episodeId, 'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
       h('span', 'flex min-w-0 flex-1 flex-col', [
         h('span', 'truncate text-body font-semibold', item.seriesTitle),
-        h('span', 'truncate text-small text-muted', 'Episode ' + item.episodeNumber + ': ' + item.episodeTitle),
+        h('span', 'truncate text-small text-muted', t('episodeTitle', { n: item.episodeNumber, title: item.episodeTitle })),
       ]),
       h('span', 'shrink-0 text-small text-muted', progress),
     ]);
@@ -294,37 +360,43 @@
   }
 
   function renderMyList(tab) {
+    setTitle(t('myList'));
     var tabs = h('nav', 'flex gap-2', [
-      ['following', '/my-list', 'Following'],
-      ['history', '/my-list/history', 'Watch history'],
-    ].map(function (t) {
-      var on = t[0] === tab;
-      var a = navLink(t[1], on
+      ['following', '/my-list', t('following')],
+      ['history', '/my-list/history', t('watchHistory')],
+    ].map(function (tb) {
+      var on = tb[0] === tab;
+      var a = navLink(tb[1], on
         ? 'inline-flex min-h-11 items-center rounded-full border border-accent bg-accent px-4 text-body font-medium text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
-        : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', t[2]);
+        : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', tb[2]);
       if (on) a.setAttribute('aria-current', 'page');
-      a.dataset.testid = 'my-list-tab-' + t[0];
+      a.dataset.testid = 'my-list-tab-' + tb[0];
       return a;
     }));
-    tabs.setAttribute('aria-label', 'My List');
+    tabs.setAttribute('aria-label', t('myList'));
     var body = h('div', '', [tab === 'history' ? loadingList() : posterSkeleton(6)]);
+    body.setAttribute('aria-busy', 'true');
     show(h('div', 'flex flex-col gap-4', [
-      h('h1', 'text-title', 'My List'),
+      h('h1', 'text-title', t('myList')),
       tabs,
       body,
     ]), BACK_HOME);
 
     function browseButton() {
-      return navLink('/', 'btn-primary', 'Browse series');
+      return navLink('/', 'btn-primary', t('browseSeries'));
+    }
+    function fill(node) {
+      body.replaceChildren(node);
+      body.setAttribute('aria-busy', 'false');
     }
 
     if (isGuest()) {
-      var join = h('button', 'btn-primary', 'Make an account');
+      var join = h('button', 'btn-primary', t('makeAccount'));
       join.type = 'button';
       join.addEventListener('click', function () { askForAccount('keep your own list'); });
-      body.replaceChildren(h('div', 'state-empty', [
-        h('h2', 'text-heading', 'Your list needs an account'),
-        h('p', 'text-body text-muted', 'Make an account to follow series and keep a watch history.'),
+      fill(h('div', 'state-empty', [
+        h('h2', 'text-heading', t('listNeedsAccountTitle')),
+        h('p', 'text-body text-muted', t('listNeedsAccountBody')),
         join,
       ]));
       return;
@@ -334,9 +406,9 @@
     api(path).then(function (data) {
       if (tab === 'history') {
         if (!data.history.length) {
-          body.replaceChildren(h('div', 'state-empty', [
-            h('h2', 'text-heading', 'Nothing watched yet'),
-            h('p', 'text-body text-muted', 'Episodes you play show up here, most recent first.'),
+          fill(h('div', 'state-empty', [
+            h('h2', 'text-heading', t('nothingWatchedTitle')),
+            h('p', 'text-body text-muted', t('nothingWatchedBody')),
             browseButton(),
           ]));
           return;
@@ -344,12 +416,12 @@
         var list = h('ul', 'list max-w-2xl');
         list.dataset.testid = 'watch-history';
         data.history.forEach(function (item) { list.appendChild(historyRow(item)); });
-        body.replaceChildren(list);
+        fill(list);
       } else {
         if (!data.series.length) {
-          body.replaceChildren(h('div', 'state-empty', [
-            h('h2', 'text-heading', 'You are not following any series'),
-            h('p', 'text-body text-muted', 'Tap Follow on a series to keep it here.'),
+          fill(h('div', 'state-empty', [
+            h('h2', 'text-heading', t('notFollowingTitle')),
+            h('p', 'text-body text-muted', t('notFollowingBody')),
             browseButton(),
           ]));
           return;
@@ -357,11 +429,11 @@
         var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'followed-series';
         data.series.forEach(function (s) { grid.appendChild(tile(s)); });
-        body.replaceChildren(grid);
+        fill(grid);
       }
     }).catch(function () {
-      body.replaceChildren(errorState(
-        tab === 'history' ? 'Could not load your watch history' : 'Could not load the series you follow',
+      fill(errorState(
+        tab === 'history' ? t('loadHistoryFailed') : t('loadFollowsFailed'),
         function () { renderMyList(tab); }));
     });
   }
@@ -380,8 +452,8 @@
     api('/api/episodes/' + ctx.episode.id + '/unlock', 'POST')
       .then(function () { ctx.onUnlocked(); })
       .catch(function (err) {
-        if (err.status === 402) ctx.notice('Not enough coins to unlock episode ' + ctx.episode.number + '.', true);
-        else if (err.status !== 401) ctx.notice('Could not unlock. Try again.', true);
+        if (err.status === 402) ctx.notice(t('notEnoughCoins', { n: ctx.episode.number }), true);
+        else if (err.status !== 401) ctx.notice(t('unlockFailed'), true);
       });
   }
 
@@ -394,7 +466,7 @@
     return e.state;
   }
 
-  var STATE_LABEL = { free: 'free', unlocked: 'unlocked', locked: 'locked', watching: 'currently watching', watched: 'watched' };
+  var STATE_KEY = { free: 'stateFree', unlocked: 'stateUnlocked', locked: 'stateLocked', watching: 'stateWatching', watched: 'stateWatched' };
 
   function episodeTile(/** @type {EpisodeItem} */ e, state, onOpen) {
     var cls = {
@@ -405,7 +477,7 @@
       watched: 'border border-line bg-raised text-muted',
     }[state];
     var marker = {
-      free: h('span', 'text-small font-medium text-accent', 'Free'),
+      free: h('span', 'text-small font-medium text-accent', t('freeBadge')),
       unlocked: icon('unlock'),
       locked: h('span', 'inline-flex items-center gap-1 text-small', [icon('coin', 'h-3 w-3'), String(e.coinPrice)]),
       watching: icon('play'),
@@ -418,8 +490,8 @@
     ]);
     btn.type = 'button';
     btn.title = e.title;
-    btn.setAttribute('aria-label', 'Episode ' + e.number + ', ' + e.title + ', ' + STATE_LABEL[state] +
-      (state === 'locked' ? ', ' + plural(e.coinPrice, 'coin', 'coins') : ''));
+    btn.setAttribute('aria-label', t('episodeLabel', { n: e.number, title: e.title, state: t(STATE_KEY[state]) }) +
+      (state === 'locked' ? ', ' + coinsCount(e.coinPrice) : ''));
     btn.addEventListener('click', function () { onOpen(e); });
     if (state === 'locked') btn.dataset.testid = 'unlock-button';
     var li = h('li', '', [btn]);
@@ -432,22 +504,22 @@
       return h('li', 'inline-flex items-center gap-1', [marker, label]);
     }
     return h('ul', 'mt-3 flex flex-wrap gap-x-4 gap-y-1 px-1 text-small text-muted', [
-      item(icon('coin', 'h-3 w-3'), 'Locked (coins)'),
-      item(icon('unlock', 'h-3 w-3'), 'Unlocked'),
-      item(icon('play', 'h-3 w-3'), 'Watching'),
-      item(icon('check', 'h-3 w-3'), 'Watched'),
+      item(icon('coin', 'h-3 w-3'), t('legendLocked')),
+      item(icon('unlock', 'h-3 w-3'), t('legendUnlocked')),
+      item(icon('play', 'h-3 w-3'), t('legendWatching')),
+      item(icon('check', 'h-3 w-3'), t('legendWatched')),
     ]);
   }
 
   function relatedSection(slug) {
     var section = h('section', '');
-    section.appendChild(h('h2', 'section-label', 'Related series'));
+    section.appendChild(h('h2', 'section-label', t('relatedSeries')));
     var body = posterSkeleton(6);
     section.appendChild(body);
     function load() {
       api('/api/series/' + encodeURIComponent(slug) + '/related').then(function (data) {
         if (!data.series.length) {
-          body.replaceWith(body = h('p', 'px-1 text-body text-muted', 'No other series yet.'));
+          body.replaceWith(body = h('p', 'px-1 text-body text-muted', t('noOtherSeries')));
           return;
         }
         var grid = h('div', POSTER_GRID);
@@ -455,11 +527,11 @@
         data.series.forEach(function (r) { grid.appendChild(tile(r)); });
         body.replaceWith(body = grid);
       }).catch(function () {
-        var retry = h('button', 'btn-secondary', 'Retry');
+        var retry = h('button', 'btn-secondary', t('retry'));
         retry.type = 'button';
         retry.addEventListener('click', load);
         body.replaceWith(body = h('div', 'flex flex-col items-start gap-2 px-1', [
-          h('p', 'text-body text-muted', 'Could not load related series. The rest of this page still works.'),
+          h('p', 'text-body text-muted', t('relatedFailed')),
           retry,
         ]));
       });
@@ -474,6 +546,7 @@
       /** @type {SeriesSummary & {synopsis:string, viewCount:number, episodes:EpisodeItem[],
        *   continueEpisode:{id:number, number:number, resume:boolean}|null}} */
       var s = data.series;
+      setTitle(s.title);
       var message = h('p', 'text-small text-muted');
       message.setAttribute('role', 'status');
       function notice(text, isError) {
@@ -495,7 +568,7 @@
         : s.episodes[0];
       var watchBtn = h('button', 'btn-primary flex-1', [
         icon('play'),
-        s.continueEpisode ? 'Continue episode ' + s.continueEpisode.number : 'Watch now',
+        s.continueEpisode ? t('continueEpisode', { n: s.continueEpisode.number }) : t('watchNow'),
       ]);
       watchBtn.type = 'button';
       watchBtn.dataset.testid = 'primary-watch';
@@ -509,7 +582,7 @@
       var followBtn = h('button', 'btn-secondary');
       followBtn.type = 'button';
       function paintFollow() {
-        followBtn.textContent = following ? 'Following' : 'Follow';
+        followBtn.textContent = following ? t('following') : t('follow');
         followBtn.setAttribute('aria-pressed', following ? 'true' : 'false');
       }
       paintFollow();
@@ -527,20 +600,20 @@
             following = !want;
             paintFollow();
             // A guest gets "account_required"; the platform bridge shows its own sign-up sheet.
-            if (err.status !== 401) notice('Could not update follow. Try again.', true);
+            if (err.status !== 401) notice(t('followFailed'), true);
           });
       });
 
       // Share: the system share sheet where there is one, else copy the link.
       var shareBtn = h('button', 'btn-secondary', [icon('share')]);
       shareBtn.type = 'button';
-      shareBtn.setAttribute('aria-label', 'Share');
-      shareBtn.title = 'Share';
+      shareBtn.setAttribute('aria-label', t('share'));
+      shareBtn.title = t('share');
       shareBtn.addEventListener('click', function () {
         var url = location.origin + '/series/' + encodeURIComponent(slug);
         function copy() {
           if (!navigator.clipboard) return Promise.reject(new Error('no clipboard'));
-          return navigator.clipboard.writeText(url).then(function () { notice('Link copied.'); });
+          return navigator.clipboard.writeText(url).then(function () { notice(t('linkCopied')); });
         }
         var shared = navigator.share
           ? navigator.share({ title: s.title, url: url }).catch(function (err) {
@@ -548,20 +621,20 @@
               return copy();
             })
           : copy();
-        shared.catch(function () { notice('Could not copy. The link is ' + url, true); });
+        shared.catch(function () { notice(t('copyFailed', { url: url }), true); });
       });
 
       // Description, clamped to three lines with More / Less when it is longer.
       var synopsis = h('p', 'text-body line-clamp-3 max-w-prose', s.synopsis);
       synopsis.id = 'series-synopsis';
-      var moreBtn = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'More');
+      var moreBtn = h('button', 'inline-flex min-h-11 items-center text-body font-medium text-accent', t('more'));
       moreBtn.type = 'button';
       moreBtn.hidden = true;
       moreBtn.setAttribute('aria-controls', synopsis.id);
       moreBtn.setAttribute('aria-expanded', 'false');
       moreBtn.addEventListener('click', function () {
         var open = synopsis.classList.toggle('line-clamp-3') === false;
-        moreBtn.textContent = open ? 'Less' : 'More';
+        moreBtn.textContent = open ? t('less') : t('more');
         moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
 
@@ -573,19 +646,19 @@
         episodes = h('div', '', [grid, legend()]);
       } else {
         episodes = h('div', 'state-empty', [
-          h('h3', 'text-heading', 'No episodes yet'),
-          h('p', 'text-body text-muted', 'Episodes will show up here once they are added.'),
+          h('h3', 'text-heading', t('noEpisodesTitle')),
+          h('p', 'text-body text-muted', t('noEpisodesBody')),
         ]);
       }
 
       var page = h('div', 'flex flex-col gap-6', [
-        cover(s, 'h-40 w-full rounded-xl border border-line sm:h-56', 'text-title text-fg'),
+        cover(s, 'h-40 w-full rounded-xl border border-line sm:h-56', 'text-title text-fg', true),
         h('div', 'flex flex-col gap-2', [
           h('h1', 'text-title', s.title),
           h('div', 'flex flex-wrap items-center gap-2', [
             s.genre ? h('span', 'rounded-full bg-raised px-3 py-1 text-small text-fg', s.genre) : null,
-            h('span', 'text-small text-muted', plural(s.episodes.length, 'episode', 'episodes') + ' · ' +
-              compact(s.viewCount) + (s.viewCount === 1 ? ' view' : ' views')),
+            h('span', 'text-small text-muted', episodesCount(s.episodes.length) + ' · ' +
+              t('views', { n: s.viewCount, count: compact(s.viewCount) })),
           ]),
           h('div', 'flex flex-col items-start', [synopsis, moreBtn]),
         ]),
@@ -593,7 +666,7 @@
           h('div', 'flex gap-2 sm:max-w-md', [watchBtn, followBtn, shareBtn]),
           message,
         ]),
-        h('section', '', [h('h2', 'section-label', 'Episodes'), episodes]),
+        h('section', '', [h('h2', 'section-label', t('episodes')), episodes]),
         relatedSection(slug),
       ]);
       show(page, BACK_HOME);
@@ -601,15 +674,41 @@
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'Series not found'),
-          h('p', 'text-body text-muted', 'It may have been removed.'),
-          navLink('/', 'btn-secondary', 'Browse series'),
+          h('h2', 'text-heading', t('seriesNotFound')),
+          h('p', 'text-body text-muted', t('mayBeRemoved')),
+          navLink('/', 'btn-secondary', t('browseSeries')),
         ]), BACK_HOME);
       } else {
-        show(errorState('Could not load this series', function () { renderDetail(slug); }), BACK_HOME);
+        show(errorState(t('loadOneSeriesFailed'), function () { renderDetail(slug); }), BACK_HOME);
       }
     });
   }
+
+  // ── Analytics: drop-off ───────────────────────────────────────────────
+  // The server records play, complete and unlock itself. Leaving a playable
+  // episode before the end (another screen, closing the app) is reported
+  // here as drop_off, with the last position the player gave. A player sets
+  // that with window.dtv.reportPlayback(seconds, completed).
+  var watching = null; // { episodeId, position, completed }
+
+  window.dtv.reportPlayback = function (seconds, completed) {
+    if (!watching) return;
+    if (typeof seconds === 'number' && seconds >= 0) watching.position = Math.floor(seconds);
+    if (completed) watching.completed = true;
+  };
+
+  function endWatching() {
+    var w = watching;
+    watching = null;
+    if (!w || w.completed || !me || isGuest()) return;
+    var headers = { 'content-type': 'application/json' };
+    if (token) headers['x-usernode-token'] = token;
+    fetch('/api/events', {
+      method: 'POST', headers: headers, keepalive: true,
+      body: JSON.stringify({ name: 'drop_off', episodeId: w.episodeId, positionSeconds: w.position }),
+    }).catch(function () {});
+  }
+  window.addEventListener('pagehide', endWatching);
 
   // ── Watch ─────────────────────────────────────────────────────────────
   // The player arrives in a later phase; this screen names the episode and
@@ -617,17 +716,19 @@
   function renderWatch(id) {
     var fromSlug = history.state && history.state.seriesSlug;
     var back = fromSlug
-      ? { path: '/series/' + encodeURIComponent(fromSlug), label: 'Back to series' }
+      ? { path: '/series/' + encodeURIComponent(fromSlug), label: t('backToSeries') }
       : BACK_HOME;
     show(loadingDetail(), back);
     api('/api/episodes/' + encodeURIComponent(id)).then(function (data) {
       /** @type {EpisodeItem} */
       var e = data.episode;
+      var title = t('episodeTitle', { n: e.number, title: e.title });
+      setTitle(title);
       var message = h('p', 'text-small text-muted');
       message.setAttribute('role', 'status');
       var body;
       if (e.state === 'locked') {
-        var unlockBtn = h('button', 'btn-primary', [icon('coin'), 'Unlock for ' + plural(e.coinPrice, 'coin', 'coins')]);
+        var unlockBtn = h('button', 'btn-primary', [icon('coin'), t('unlockFor', { coins: coinsCount(e.coinPrice) })]);
         unlockBtn.type = 'button';
         unlockBtn.addEventListener('click', function () {
           openUnlockSheet({
@@ -637,24 +738,26 @@
           });
         });
         body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'This episode is locked'),
-          h('p', 'text-body text-muted', 'Unlock it with coins to watch.'),
+          h('h2', 'text-heading', t('lockedTitle')),
+          h('p', 'text-body text-muted', t('lockedBody')),
           unlockBtn,
           message,
         ]);
       } else {
-        // Opening a playable episode puts it in the person's watch history.
+        // Opening a playable episode puts it in the person's watch history
+        // (and the server counts a play).
         if (me && !isGuest()) {
           api('/api/me/watch-history/' + e.id + '/play', 'POST').catch(function () {});
+          watching = { episodeId: e.id, position: 0, completed: false };
         }
         body = h('div', 'state-empty', [
-          h('h2', 'text-heading', 'The player is coming soon'),
-          h('p', 'text-body text-muted', 'Watching episodes arrives in a later update.'),
+          h('h2', 'text-heading', t('playerSoonTitle')),
+          h('p', 'text-body text-muted', t('playerSoonBody')),
         ]);
       }
       show(h('div', 'flex flex-col gap-6', [
         h('div', 'flex flex-col gap-1', [
-          h('h1', 'text-title', 'Episode ' + e.number + ': ' + e.title),
+          h('h1', 'text-title', title),
           h('p', 'text-small text-muted', minutes(e.durationSeconds)),
         ]),
         body,
@@ -662,12 +765,12 @@
     }).catch(function (err) {
       if (err.status === 404) {
         show(h('div', 'state-empty', [
-          h('h2', 'text-heading', 'Episode not found'),
-          h('p', 'text-body text-muted', 'It may have been removed.'),
-          navLink('/', 'btn-secondary', 'Browse series'),
+          h('h2', 'text-heading', t('episodeNotFound')),
+          h('p', 'text-body text-muted', t('mayBeRemoved')),
+          navLink('/', 'btn-secondary', t('browseSeries')),
         ]), back);
       } else {
-        show(errorState('Could not load this episode', function () { renderWatch(id); }), back);
+        show(errorState(t('loadEpisodeFailed'), function () { renderWatch(id); }), back);
       }
     });
   }
@@ -698,8 +801,9 @@
   }
 
   function onboardingFrame(children) {
-    var title = h('h1', 'text-title', 'What do you like to watch?');
+    var title = h('h1', 'text-title', t('onboardingTitle'));
     title.id = 'onboarding-title';
+    title.tabIndex = -1;
     return h('div', 'mx-auto flex min-h-full max-w-md flex-col gap-6 px-6 pb-8 pt-16', [title].concat(children));
   }
 
@@ -708,6 +812,9 @@
     var skel = h('div', 'flex flex-wrap gap-2');
     for (var i = 0; i < 8; i++) skel.appendChild(h('div', 'skeleton h-11 w-28 rounded-full'));
     layer.replaceChildren(onboardingFrame([skel]));
+    // Move focus into the dialog, onto its title.
+    var heading = layer.querySelector('#onboarding-title');
+    if (heading) heading.focus({ preventScroll: true });
 
     api('/api/genres').then(function (data) {
       if (!layer) return;
@@ -717,12 +824,12 @@
       var due = onboardingDue();
 
       if (!genres.length) {
-        var backBtn = h('button', 'btn-secondary', 'Back to series');
+        var backBtn = h('button', 'btn-secondary', t('backToSeries'));
         backBtn.type = 'button';
         backBtn.addEventListener('click', function () { location.hash = '#/'; });
         layer.replaceChildren(onboardingFrame([h('div', 'state-empty', [
-          h('h2', 'text-heading', 'No genres yet'),
-          h('p', 'text-body text-muted', 'You can pick favourites once the first genres are added.'),
+          h('h2', 'text-heading', t('noGenresTitle')),
+          h('p', 'text-body text-muted', t('noGenresBody')),
           backBtn,
         ])]));
         return;
@@ -739,7 +846,7 @@
       function paintSave() {
         var left = min - picked.size;
         save.disabled = left > 0;
-        save.textContent = left > 0 ? 'Pick ' + left + ' more' : 'Start watching';
+        save.textContent = left > 0 ? t('pickMore', { n: left }) : t('startWatching');
       }
 
       genres.forEach(function (g) {
@@ -772,31 +879,31 @@
           closeOnboarding();
           if (location.hash === '#/onboarding') location.hash = '#/';
         }).catch(function (err) {
-          if (err.status !== 401) message.textContent = 'Could not save your genres. Try again.';
+          if (err.status !== 401) message.textContent = t('saveGenresFailed');
           paintSave();
         });
       });
 
       var later = null;
       if (!due) {
-        later = h('button', 'btn-secondary w-full', 'Not now');
+        later = h('button', 'btn-secondary w-full', t('notNow'));
         later.type = 'button';
         later.addEventListener('click', function () { location.hash = '#/'; });
       }
 
       layer.replaceChildren(onboardingFrame([
-        h('p', 'text-body text-muted', 'Pick at least ' + plural(min, 'genre', 'genres') + '. We use them to suggest series for you.'),
+        h('p', 'text-body text-muted', t('pickAtLeast', { genres: t('genresCount', { n: min }) })),
         picker,
         h('div', 'mt-auto flex flex-col gap-3 pt-4', [message, save, later]),
       ]));
     }).catch(function () {
       if (!layer) return;
-      var retry = h('button', 'btn-primary', 'Retry');
+      var retry = h('button', 'btn-primary', t('retry'));
       retry.type = 'button';
       retry.addEventListener('click', renderOnboarding);
       layer.replaceChildren(onboardingFrame([h('div', 'state-error', [
-        h('h2', 'text-heading', 'Could not load genres'),
-        h('p', 'text-body text-muted', 'Check your connection and try again.'),
+        h('h2', 'text-heading', t('loadGenresFailed')),
+        h('p', 'text-body text-muted', t('checkConnection')),
         retry,
       ])]));
     });
@@ -1514,6 +1621,7 @@
   // every in-app navigation so a reload still works.
   function navigate(path, state) {
     history.pushState(state || null, '', path + location.search);
+    focusHeading = true;
     route();
   }
 
@@ -1525,6 +1633,7 @@
   });
 
   function route() {
+    endWatching();
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
@@ -1540,6 +1649,45 @@
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();
   }
+  // Strings outside the screens: the skip link.
+  function applyChrome() {
+    var skip = document.getElementById('skip-link');
+    if (skip) skip.textContent = t('skipToContent');
+  }
+
+  // ── Error reports ─────────────────────────────────────────────────────
+  // Uncaught errors in this page go to the server, which passes them to
+  // Sentry (when it is set up). Only for a signed-in person: a guest's write
+  // would be answered with the platform's "make an account" sheet. At most
+  // five a page; the path is sent without its query (the token).
+  var errorBudget = 5;
+  var pendingErrors = [];
+  function sendError(report) {
+    if (me === null) { if (pendingErrors.length < errorBudget) pendingErrors.push(report); return; }
+    if (isGuest() || errorBudget <= 0) return;
+    errorBudget -= 1;
+    api('/api/client-errors', 'POST', report).catch(function () {});
+  }
+  function reportError(err, fallback) {
+    sendError({
+      name: (err && err.name) || 'Error',
+      message: String((err && err.message) || fallback || err).slice(0, 2000),
+      stack: err && err.stack ? String(err.stack).slice(0, 8000) : undefined,
+      path: location.pathname,
+    });
+  }
+  window.addEventListener('error', function (e) { reportError(e.error, e.message); });
+  window.addEventListener('unhandledrejection', function (e) { reportError(e.reason); });
+
+  // Installable and offline-aware: the service worker (public/sw.js) shows
+  // the offline page when there is no connection. Registration can fail in
+  // a third-party frame; the app works the same without it.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    });
+  }
+
   // Paint a skeleton the moment the app opens, before /api/me answers, so
   // loading never looks like an empty page. It only picks a shape by path;
   // route() replaces it as usual once it runs.
@@ -1556,12 +1704,19 @@
   }
 
   // Ask who is looking first, so the buttons know whether to ask a guest to
-  // make an account and onboarding knows whether it is due.
+  // make an account and onboarding knows whether it is due. The language
+  // (which may come from Homeroom) is settled at the same time.
   bootLoading();
-  api('/api/me').then(function (data) { me = data; }, function (err) {
-    if (err.status === 401) me = 'guest';
-  }).then(function () {
-    window.addEventListener('popstate', route);
+  var who = api('/api/me').then(function (data) { me = data; }, function (err) {
+    me = err.status === 401 ? 'guest' : false;
+  });
+  Promise.all([who, window.dtvI18n.ready]).then(function () {
+    if (me === false) me = null;
+    var queued = pendingErrors;
+    pendingErrors = [];
+    if (me) queued.forEach(sendError);
+    applyChrome();
+    window.addEventListener('popstate', function () { focusHeading = true; route(); });
     route();
   });
 })();
