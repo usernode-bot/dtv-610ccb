@@ -1,7 +1,8 @@
 // Dtv front end: a series browse screen, a series detail screen, the watch
-// screen, the Coins page, the transaction history and the genre onboarding.
+// screen, My List, the Coins page, the transaction history and the genre onboarding.
 // Path routes: "/" (browse), "/series/<slug>" (detail), "/watch/<episodeId>"
-// (watch), "/store" (Coins) and "/history" (transactions). Locked episodes open
+// (watch), "/my-list" (followed series), "/my-list/history" (watch history),
+// "/store" (Coins) and "/history" (transactions). Locked episodes open
 // the unlock sheet. Coins only ever change on the server: the page asks for an
 // action and shows the balance the server answers with. Older "#/series/<slug>" links are
 // moved to the path form. Links marked data-nav navigate in place. Onboarding
@@ -212,7 +213,10 @@
     show(loadingBrowse());
     api('/api/series').then(function (data) {
       var page = h('div', 'flex flex-col gap-4');
-      page.appendChild(h('div', 'flex items-center justify-between gap-4', [h('h1', 'text-title', 'Series'), coinChip()]));
+      page.appendChild(h('div', 'flex items-center justify-between gap-4', [
+        h('h1', 'text-title', 'Series'),
+        h('div', 'flex items-center gap-4', [myListLink(), coinChip()]),
+      ]));
       if (data.demo) {
         page.appendChild(h('p', 'text-small text-muted', 'Staging demo catalogue: these series are made up for testing.'));
       }
@@ -241,6 +245,110 @@
     ]);
     a.dataset.testid = 'coin-balance';
     return a;
+  }
+
+  function myListLink() {
+    var a = navLink('/my-list', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'My List');
+    a.dataset.testid = 'my-list-link';
+    return a;
+  }
+
+  // ── My List ───────────────────────────────────────────────────────────
+  // Two tabs: the series the person follows, and the episodes they played,
+  // most recent first. Both are their own rows, so a guest is asked to make
+  // an account instead.
+  function loadingList() {
+    var rows = h('div', 'flex flex-col gap-2');
+    for (var i = 0; i < 4; i++) rows.appendChild(h('div', 'skeleton h-16 w-full'));
+    return rows;
+  }
+
+  function historyRow(item) {
+    var progress = item.completed ? 'Watched'
+      : item.positionSeconds > 0 ? 'Stopped at ' + minutes(item.positionSeconds) : 'Started';
+    var a = navLink('/watch/' + item.episodeId, 'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
+      h('span', 'flex min-w-0 flex-1 flex-col', [
+        h('span', 'truncate text-body font-semibold', item.seriesTitle),
+        h('span', 'truncate text-small text-muted', 'Episode ' + item.episodeNumber + ': ' + item.episodeTitle),
+      ]),
+      h('span', 'shrink-0 text-small text-muted', progress),
+    ]);
+    a.dataset.seriesSlug = item.seriesSlug;
+    return h('li', '', [a]);
+  }
+
+  function renderMyList(tab) {
+    var tabs = h('nav', 'flex gap-2', [
+      ['following', '/my-list', 'Following'],
+      ['history', '/my-list/history', 'Watch history'],
+    ].map(function (t) {
+      var on = t[0] === tab;
+      var a = navLink(t[1], on
+        ? 'inline-flex min-h-11 items-center rounded-full border border-accent bg-accent px-4 text-body font-medium text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
+        : 'inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-body text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', t[2]);
+      if (on) a.setAttribute('aria-current', 'page');
+      a.dataset.testid = 'my-list-tab-' + t[0];
+      return a;
+    }));
+    tabs.setAttribute('aria-label', 'My List');
+    var body = h('div', '', [loadingList()]);
+    show(h('div', 'flex flex-col gap-4', [
+      navLink('/', 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', 'All series'),
+      h('h1', 'text-title', 'My List'),
+      tabs,
+      body,
+    ]));
+
+    function browseButton() {
+      return navLink('/', 'btn-primary', 'Browse series');
+    }
+
+    if (isGuest()) {
+      var join = h('button', 'btn-primary', 'Make an account');
+      join.type = 'button';
+      join.addEventListener('click', function () { askForAccount('keep your own list'); });
+      body.replaceChildren(h('div', 'state-empty', [
+        h('h2', 'text-heading', 'Your list needs an account'),
+        h('p', 'text-body text-muted', 'Make an account to follow series and keep a watch history.'),
+        join,
+      ]));
+      return;
+    }
+
+    var path = tab === 'history' ? '/api/me/watch-history' : '/api/me/follows';
+    api(path).then(function (data) {
+      if (tab === 'history') {
+        if (!data.history.length) {
+          body.replaceChildren(h('div', 'state-empty', [
+            h('h2', 'text-heading', 'Nothing watched yet'),
+            h('p', 'text-body text-muted', 'Episodes you play show up here, most recent first.'),
+            browseButton(),
+          ]));
+          return;
+        }
+        var list = h('ul', 'list');
+        list.dataset.testid = 'watch-history';
+        data.history.forEach(function (item) { list.appendChild(historyRow(item)); });
+        body.replaceChildren(list);
+      } else {
+        if (!data.series.length) {
+          body.replaceChildren(h('div', 'state-empty', [
+            h('h2', 'text-heading', 'You are not following any series'),
+            h('p', 'text-body text-muted', 'Tap Follow on a series to keep it here.'),
+            browseButton(),
+          ]));
+          return;
+        }
+        var grid = h('div', 'grid grid-cols-2 gap-4 sm:grid-cols-3');
+        grid.dataset.testid = 'followed-series';
+        data.series.forEach(function (s) { grid.appendChild(tile(s)); });
+        body.replaceChildren(grid);
+      }
+    }).catch(function () {
+      body.replaceChildren(errorState(
+        tab === 'history' ? 'Could not load your watch history' : 'Could not load the series you follow',
+        function () { renderMyList(tab); }));
+    });
   }
 
   // ── Unlock ────────────────────────────────────────────────────────────
@@ -756,6 +864,10 @@
           message,
         ]);
       } else {
+        // Opening a playable episode puts it in the person's watch history.
+        if (me && !isGuest()) {
+          api('/api/me/watch-history/' + e.id + '/play', 'POST').catch(function () {});
+        }
         body = h('div', 'state-empty', [
           h('h2', 'text-heading', 'The player is coming soon'),
           h('p', 'text-body text-muted', 'Watching episodes arrives in a later update.'),
@@ -1222,7 +1334,7 @@
     var a = ev.target.closest && ev.target.closest('a[data-nav]');
     if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
     ev.preventDefault();
-    navigate(a.getAttribute('href'));
+    navigate(a.getAttribute('href'), a.dataset.seriesSlug ? { seriesSlug: a.dataset.seriesSlug } : null);
   });
 
   function route() {
@@ -1234,6 +1346,8 @@
     else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
     else if (location.pathname === '/store') renderStore();
     else if (location.pathname === '/history') renderHistory();
+    else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
+    else if (/^\/my-list\/history\/?$/.test(location.pathname)) renderMyList('history');
     else renderBrowse();
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();

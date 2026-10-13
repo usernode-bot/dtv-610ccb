@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
 import {
   claimCheckIn, ensureProfile, getCheckIn, listCoinTransactions, listFollowed, listUnlocked,
-  listWatchHistory, minFavoriteGenres, saveFavoriteGenres, saveProgress, utcDay,
+  listWatchHistory, minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress, utcDay,
 } from '../../lib/me';
 
 export function meRouter(pool: Pool): express.Router {
@@ -49,6 +49,17 @@ export function meRouter(pool: Pool): express.Router {
     await ensureProfile(pool, userId(req)!, String(req.user!.username));
     const ok = await saveProgress(pool, userId(req)!, episodeId, position, req.body?.completed === true);
     if (!ok) return void res.status(404).json({ error: 'not_found' });
+    res.json({ saved: true });
+  }));
+
+  // The watch screen opened this episode: put it in the person's history.
+  router.post('/watch-history/:episodeId/play', wrap(async (req, res) => {
+    const episodeId = Number(req.params.episodeId);
+    if (!Number.isInteger(episodeId)) return void res.status(400).json({ error: 'invalid_episode' });
+    await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const result = await recordPlay(pool, userId(req)!, episodeId);
+    if (result === 'not_found') return void res.status(404).json({ error: 'not_found' });
+    if (result === 'locked') return void res.status(403).json({ error: 'locked' });
     res.json({ saved: true });
   }));
 

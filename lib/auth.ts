@@ -19,6 +19,7 @@ const ACCOUNT_ACTIONS: Array<[RegExp, string]> = [
   [/^\/api\/ads\/sessions(\/[^/]+\/complete)?$/, 'unlock an episode'],
   [/^\/api\/me\/check-in$/, 'check in'],
   [/^\/api\/store\/checkout$/, 'buy coins'],
+  [/^\/api\/me\/watch-history\/[^/]+\/play$/, 'keep a watch history'],
 ];
 
 /** The `account_required` answer for a request a guest may not make. */

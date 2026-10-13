@@ -1,6 +1,7 @@
 {
   "description": "Watch movies and dramas together with the group",
   "icon": {
+    "image": "brand/icon.png",
     "emoji": "\ud83c\udfac"
   },
   "secrets": [
@@ -97,6 +98,19 @@
       ]
     },
     {
+      "id": "mylist.following",
+      "name": "My List opens on the Following tab",
+      "path": "/my-list",
+      "expectSelector": "[data-testid=my-list-tab-following][aria-current=page]",
+      "expectText": "My List",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
       "name": "Transaction history renders",
       "path": "/history",
       "expectText": "Transaction history"
@@ -105,6 +119,16 @@
       "name": "Browse shows the coin balance",
       "path": "/",
       "expectSelector": "[data-testid=coin-balance]"
+    },
+    {
+      "name": "My List watch history tab",
+      "path": "/my-list/history",
+      "expectSelector": "[data-testid=my-list-tab-history][aria-current=page]"
+    },
+    {
+      "name": "Browse links to My List",
+      "path": "/",
+      "expectSelector": "[data-testid=my-list-link]"
     }
   ],
   "private_tables": [
