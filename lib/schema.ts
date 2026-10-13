@@ -81,6 +81,32 @@ const STATEMENTS: string[] = [
   `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS video_url TEXT`,
   `CREATE INDEX IF NOT EXISTS series_genre_idx ON series (genre_id)`,
 
+  // Drama catalogue fields. Nullable so rows from before them stay valid.
+  //   country: where the drama is from. format: 'long' (16-40 episodes of
+  //   45-70 min, landscape) or 'short' (40-100 episodes of 1-3 min, vertical
+  //   9:16). genres: every genre label (genre / genre_id stay the primary one).
+  //   rating: viewer score out of 10. total_episodes: planned episode count.
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS original_title TEXT`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS country TEXT CHECK (country IN ('china', 'korea'))`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS format TEXT CHECK (format IN ('long', 'short'))`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS genres TEXT[] NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS release_year SMALLINT CHECK (release_year BETWEEN 1900 AND 2100)`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS status TEXT CHECK (status IN ('ongoing', 'completed'))`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS poster_url TEXT`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS banner_url TEXT`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS total_episodes INTEGER CHECK (total_episodes > 0)`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS rating NUMERIC(3,1) CHECK (rating BETWEEN 0 AND 10)`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE`,
+  // Read-only aliases under the catalogue's names; write synopsis, number,
+  // duration_seconds and coin_price, which the app already reads.
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS description TEXT GENERATED ALWAYS AS (synopsis) STORED`,
+  `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS episode_number INTEGER GENERATED ALWAYS AS (number) STORED`,
+  `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS duration_sec INTEGER GENERATED ALWAYS AS (duration_seconds) STORED`,
+  `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS is_free BOOLEAN GENERATED ALWAYS AS (coin_price = 0) STORED`,
+  // Languages with subtitles, as BCP-47 tags ('en', 'zh-Hans', 'ko').
+  `ALTER TABLE episodes ADD COLUMN IF NOT EXISTS subtitle_langs TEXT[] NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS series_country_format_idx ON series (country, format)`,
+
   // Who follows which series. user_id is the platform user id from the token.
   `CREATE TABLE IF NOT EXISTS follows (
      user_id    BIGINT NOT NULL,

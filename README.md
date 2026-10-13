@@ -30,12 +30,17 @@ Private tables (also listed in `dapp.json`) are marked `staging:private`: their 
 |---|---|---|
 | `profiles` | private | `id` (Homeroom user id), `username`, `avatar_url`, `coin_balance` (>= 0), `created_at` |
 | `genres` | public | `id`, `slug`, `name`, `created_at` |
-| `series` | public | `id`, `slug`, `title`, `original_title`, `synopsis`, `genre` (text label), `genre_id` -> genres, `country` (ISO code, e.g. `CN`, `KR`), `format` (`long` / `short`), `rating` (0-10), `is_featured`, `released_on`, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
-| `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `created_at`; unique `(series_id, number)` |
+| `series` | public | `id`, `slug`, `title`, `original_title` (Hanzi/Hangul), `synopsis`, `description` (read-only alias of `synopsis`), `country` (`china` / `korea`; older rows may hold ISO codes `CN` / `KR`), `format` (`long` / `short`), `genres` (text[]), `genre` (primary label), `genre_id` -> genres, `release_year`, `released_on`, `status` (`ongoing` / `completed`), `poster_url`, `banner_url`, `total_episodes`, `rating` (0-10), `is_featured`, `cover_url`, `cover_tone`, `is_demo`, `view_count` (+1 the first time a person starts one of its episodes), `created_at` |
+| `episodes` | public | `id`, `series_id` -> series, `number`, `title`, `duration_seconds`, `coin_price` (0 = free), `video_url` (HLS), `subtitle_langs` (text[], BCP-47), `created_at`; read-only aliases `episode_number` (= `number`), `duration_sec` (= `duration_seconds`), `is_free` (= `coin_price = 0`); unique `(series_id, number)` |
 | `follows` | public | `user_id`, `series_id` -> series, `created_at`; primary key `(user_id, series_id)` |
 | `watch_history` | private | `user_id` -> profiles, `episode_id` -> episodes, `position_seconds`, `completed`, `updated_at` |
 | `coin_transactions` | private | `id`, `user_id`, `amount` (+ earns, - spends), `type` (`purchase` / `unlock` / `reward` / `ad`), `episode_id`, `note`, `created_at` |
 | `unlocked_episodes` | private | `user_id` -> profiles, `episode_id` -> episodes, `coin_transaction_id`, `unlocked_at` |
+
+The drama columns are nullable (older rows have none). `country`, `format`, `status`, `release_year`,
+`total_episodes` and `rating` are checked by constraints. Formats: `long` is 16-40 episodes of 45-70 min
+(landscape), `short` is 40-100 episodes of 1-3 min (vertical 9:16). The aliases are generated columns so the
+existing queries keep working: write `synopsis`, `number`, `duration_seconds` and `coin_price`.
 
 The Phase 0 tables `series_follows`, `coin_balances` and `episode_unlocks` are left in place but no longer read.
 Existing follows are copied into `follows` and the ledger column `kind` becomes `type`.
@@ -60,6 +65,29 @@ on every **staging** start and never in production. To run it by hand:
 ```sh
 npm run build
 DATABASE_URL=postgres://... npm run seed   # refuses when USERNODE_ENV=production
+```
+
+### The drama catalogue
+
+`lib/seed-dramas.ts` adds 16 original, fictional dramas: 4 Chinese long (historical romance, wuxia-style
+adventure, modern office, fantasy), 4 Chinese short (hidden-identity chairman, rebirth, contract marriage,
+mistaken identity), 4 Korean long (romantic comedy, medical, music mystery, family melodrama) and 4 Korean
+short (chaebol heir romance, school comeback, time slip, second-chance marriage). Each has a synopsis, 2-3
+genres, a release year, 5 hand-written episodes and generated "Episode N" rows up to `total_episodes`. Long
+dramas have 3 free episodes (then 15 coins each), short dramas 10 (then 3 coins).
+
+Placeholders, each marked `// PLACEHOLDER: replace with licensed content` in that file: posters and banners
+are generated gradient SVG cards (data URIs) with the title, and every episode plays one of Apple's public HLS
+test streams. Replace them with licensed artwork and footage before this content goes to real viewers.
+
+It is idempotent: series are upserted by `slug` and episodes by `(series_id, number)`. Re-running updates the
+seeded fields of `is_demo` rows in place, removes episodes past a lowered `total_episodes`, never touches a
+non-demo series with the same slug, and never changes view counts, follows, history, coins or unlocks. It
+runs with the demo seed: on every staging start, and by hand with the same command:
+
+```sh
+npm run build
+DATABASE_URL=postgres://... npm run seed   # schema + demo + drama catalogue; refuses when USERNODE_ENV=production
 ```
 
 ## Run and test
