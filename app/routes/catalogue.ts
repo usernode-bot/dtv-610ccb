@@ -1,4 +1,5 @@
-// Public read-only routes (guests may read) plus follow and unlock, which need an account.
+// Public read-only routes (guests may read) plus follow and unlock (one episode
+// or the rest of a series), which need an account.
 
 import express from 'express';
 import type { Pool } from 'pg';
@@ -7,6 +8,7 @@ import {
   getEpisode, getSeries, listEpisodes, listGenres, listRelated, listSeries, setFollow,
 } from '../../lib/catalogue';
 import { ensureProfile, unlockEpisode } from '../../lib/me';
+import { unlockSeriesBundle } from '../../lib/coins';
 import { CLIENT_EVENT_NAMES, episodeDropOff, trackEvent, type EventName } from '../../lib/analytics';
 import { SwrCache } from '../../lib/cache';
 
@@ -98,6 +100,20 @@ export function catalogueRouter(
       await trackEvent(pool, { userId: userId(req)!, name: 'unlock', episodeId: id, props: { coins: result.spent } });
     }
     res.json({ episode: await getEpisode(pool, id, userId(req)), coinBalance: result.coinBalance });
+  }));
+
+  // Unlock every remaining paid episode of a series at the bundle price the
+  // person was shown (expectedPrice); a changed price answers 409 with the new one.
+  router.post('/series/:slug/unlock-all', requireUser, wrap(async (req, res) => {
+    const expected = req.body?.expectedPrice;
+    if (!Number.isInteger(expected) || expected < 0) return void res.status(400).json({ error: 'invalid_price' });
+    await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const r = await unlockSeriesBundle(pool, userId(req)!, String(req.params.slug), expected);
+    if (r.status === 'ok') return void res.json({ coinBalance: r.coinBalance, unlockedCount: r.unlockedCount });
+    if (r.status === 'not_found') return void res.status(404).json({ error: 'not_found' });
+    if (r.status === 'not_enough_coins') return void res.status(402).json({ error: 'not_enough_coins' });
+    if (r.status === 'price_changed') return void res.status(409).json({ error: 'price_changed', bundle: r.bundle });
+    res.status(409).json({ error: 'nothing_to_unlock' });
   }));
 
   router.put('/series/:slug/follow', requireUser, wrap(async (req, res) => {
