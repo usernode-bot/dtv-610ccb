@@ -58,6 +58,16 @@ const STATEMENTS: string[] = [
   // How many times someone started an episode of this series for the first
   // time (one per person per episode; see saveProgress).
   `ALTER TABLE series ADD COLUMN IF NOT EXISTS view_count INTEGER NOT NULL DEFAULT 0 CHECK (view_count >= 0)`,
+  // Browse metadata: the title in its original language, where it is from
+  // (ISO 3166 code, e.g. CN, KR), long or short drama (short dramas are
+  // vertical, 9:16), a 0-10 rating, whether the browse hero shows it, and
+  // when it came out ("New releases").
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS original_title TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS country TEXT`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'long' CHECK (format IN ('long', 'short'))`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS rating NUMERIC(3,1) CHECK (rating >= 0 AND rating <= 10)`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE series ADD COLUMN IF NOT EXISTS released_on DATE`,
 
   // One episode of a series. coin_price 0 means free; above 0 it is locked
   // until the viewer has an unlocked_episodes row for it.
