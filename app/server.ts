@@ -11,6 +11,10 @@ import { seedDemoCatalogue } from '../lib/seed';
 import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
+import { adsRouter } from './routes/ads';
+import { storeRouter } from './routes/store';
+import { stripeWebhook } from './routes/stripe-webhook';
+import { livePayments } from '../lib/stripe';
 import { adminRouter } from './routes/admin';
 import { accountRequired, requireUser, upsertProfileOnce, userId } from '../lib/auth';
 import { rateLimit } from '../lib/rate-limit';
@@ -60,7 +64,13 @@ const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
 // Paths that stay open without authentication. Add a path here (and add it
 // with `app.get`/`app.post` below) if you deliberately want it public.
 // Everything else requires a valid platform-issued JWT.
-const PUBLIC_API_PATHS = new Set(['/health']);
+const PUBLIC_API_PATHS = new Set(['/health', '/api/stripe/webhook']);
+
+// Stripe's webhook needs the raw bytes to check their signature, so it is
+// registered before express.json() parses bodies (and before the token check:
+// Stripe has no platform token; the signature authenticates it).
+app.post('/api/stripe/webhook',
+  express.raw({ type: 'application/json', limit: '1mb' }), stripeWebhook(pool, livePayments));
 
 // gzip every text answer (pages, scripts, the stylesheet, JSON).
 app.use(compression());
@@ -202,6 +212,12 @@ app.post('/api/client-errors', requireUser, (req, res) => {
 // Public catalogue reads (genres, series, episodes) and follow. /api/me/* is
 // personal: it requires a signed-in person and only touches their own rows.
 app.use('/api/me', meRouter(pool));
+app.use('/api/ads', adsRouter(pool));
+app.use('/api', storeRouter(pool, {
+  payments: livePayments,
+  // Back into this app through the platform, as share links are (see below).
+  appUrl: (p) => PLATFORM_ORIGIN ? PLATFORM_ORIGIN + '/app/dtv-610ccb/full?path=' + encodeURIComponent(p) : null,
+}));
 // The series manager: admins only (ADMIN_USERNAMES).
 app.use('/api/admin', adminRouter(pool));
 app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING, cacheMs: 30_000 }));

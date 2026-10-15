@@ -1,9 +1,11 @@
-// Dtv front end: a series browse screen (featured, shelves, filters and a
-// poster grid; filters live in ?country=&format=&genre=&q=), a series detail screen, the watch
-// screen, My List and the genre onboarding. Path routes: "/" (browse),
-// "/series/<slug>" (detail), "/watch/<episodeId>" (watch, with the player), "/my-list"
-// (followed series), "/my-list/history" (watch history) and, for admins, the
-// series manager under "/admin". Older "#/series/<slug>" links are
+// Dtv front end: a series browse screen, a series detail screen, the watch
+// screen, My List, the Coins page, the transaction history, the genre onboarding
+// and, for admins, the series manager. Path routes: "/" (browse),
+// "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
+// (followed series), "/my-list/history" (watch history), "/store" (Coins),
+// "/history" (transactions) and "/admin" (series manager). Locked episodes open
+// the unlock sheet. Coins only ever change on the server: the page asks for an
+// action and shows the balance the server answers with. Older "#/series/<slug>" links are
 // moved to the path form. Links marked data-nav navigate in place. Onboarding
 // is a full-screen layer over the page, shown on "#/onboarding" and, for a
 // signed-in person who has not picked genres yet, on every route until they
@@ -85,6 +87,21 @@
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
   function episodesCount(n) { return t('episodesCount', { n: n }); }
   function coinsCount(n) { return t('coinsCount', { n: n }); }
+
+  function count(n) {
+    try { return n.toLocaleString(); } catch (_) { return String(n); }
+  }
+
+  function coins(n) { return count(n) + ' ' + (n === 1 ? 'coin' : 'coins'); }
+
+  function signedIn() { return !!(me && me !== 'guest' && me.profile); }
+
+  /** The balance the server last told us. */
+  function setBalance(n) { if (signedIn()) me.profile.coinBalance = n; }
+
+  function refreshMe() {
+    return api('/api/me').then(function (data) { me = data; return data; });
+  }
 
   function minutes(seconds) {
     var m = Math.floor(seconds / 60), s = seconds % 60;
@@ -555,7 +572,7 @@
       var page = h('div', 'flex flex-col gap-6');
       page.appendChild(h('div', 'flex items-center justify-between gap-4', [
         h('h1', 'text-title', t('series')),
-        h('div', 'flex items-center gap-4', [adminLink(), myListButton()]),
+        h('div', 'flex items-center gap-4', [adminLink(), myListButton(), coinChip()]),
       ]));
       if (data.demo) {
         page.appendChild(h('p', 'text-small text-muted', t('stagingDemo')));
@@ -672,6 +689,16 @@
     }).catch(function () {
       show(errorState(t('loadSeriesFailed'), renderBrowse));
     });
+  }
+
+  /** The balance button on the Series screen; it opens the Coins page. */
+  function coinChip() {
+    var a = navLink('/store', 'inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-4 text-body font-medium text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
+      icon('coin', 'h-4 w-4 text-accent'),
+      signedIn() ? coins(me.profile.coinBalance) : 'Coins',
+    ]);
+    a.dataset.testid = 'coin-balance';
+    return a;
   }
 
   /** An external link to where requests for this app are filed. Not data-nav, so the in-app click handler leaves it alone. */
@@ -831,22 +858,254 @@
   }
 
   // ── Unlock ────────────────────────────────────────────────────────────
-  // A richer unlock sheet can plug in by setting
+  // A locked episode opens the unlock sheet: coins, a rewarded ad, the rest
+  // of the series at a discount, or the Coins page. Another sheet can still
+  // plug in by setting
   //   window.dtv.openUnlockSheet = function (ctx) { ... }
   // where ctx is { episode, series, notice(text), onUnlocked() }: call
-  // onUnlocked() once the episode is unlocked so the screen reloads. Without
-  // one, unlocking goes straight to the API.
+  // onUnlocked() once the episode is unlocked so the screen reloads.
   window.dtv = window.dtv || {};
+
+  // Rewarded ads play through window.dtv.adProvider, so a real ad SDK can
+  // replace this stand-in: show({ sessionId, minSeconds, label, onComplete(payload),
+  // onCancel(), onError(err) }). The payload goes to the server, which grants
+  // the unlock (app/routes/ads.ts); the page never unlocks anything itself.
+  // Always the dark look, like onboarding.
+  var mockAdProvider = {
+    name: 'mock',
+    show: function (o) {
+      var left = o.minSeconds;
+      var prevFocus = document.activeElement;
+      var skip = h('button', 'btn-secondary', 'Skip ad');
+      skip.type = 'button';
+      var number = h('span', 'text-title', String(left));
+      var foot = h('p', 'text-center text-body');
+      foot.setAttribute('role', 'status');
+      var ad = h('div', 'dark fixed inset-0 z-[60] flex flex-col gap-4 bg-ground p-4 text-fg', [
+        h('div', 'mx-auto flex w-full max-w-2xl items-center justify-between', [
+          h('span', 'text-small text-muted', 'Sample ad'), skip,
+        ]),
+        h('div', 'mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-line bg-raised p-6 text-center', [
+          h('h2', 'text-heading', 'Your ad would play here'),
+          h('p', 'text-body text-muted', 'This is a stand-in until a real ad partner is connected.'),
+        ]),
+        h('div', 'mx-auto flex h-20 w-20 items-center justify-center rounded-full border-4 border-accent motion-safe:animate-pulse', [number]),
+        foot,
+      ]);
+      ad.setAttribute('role', 'dialog');
+      ad.setAttribute('aria-modal', 'true');
+      ad.setAttribute('aria-label', 'Sample ad');
+      ad.dataset.testid = 'ad-player';
+      function paint() {
+        number.textContent = String(left);
+        foot.textContent = o.label + ' unlocks in ' + plural(left, 'second', 'seconds');
+      }
+      function close() {
+        clearInterval(timer);
+        document.removeEventListener('keydown', onKey);
+        ad.remove();
+        if (prevFocus && prevFocus.focus) prevFocus.focus();
+      }
+      function onKey(ev) { if (ev.key === 'Escape') { close(); o.onCancel(); } }
+      var timer = setInterval(function () {
+        left -= 1;
+        if (left > 0) return paint();
+        close();
+        o.onComplete({});
+      }, 1000);
+      skip.addEventListener('click', function () { close(); o.onCancel(); });
+      document.addEventListener('keydown', onKey);
+      paint();
+      document.body.appendChild(ad);
+      skip.focus();
+    },
+  };
+  if (!window.dtv.adProvider) window.dtv.adProvider = mockAdProvider;
+
+  var sheet = null; // { el, close }
+
+  function closeSheet() { if (sheet) sheet.close(); }
+
   function openUnlockSheet(ctx) {
     if (typeof window.dtv.openUnlockSheet === 'function') return window.dtv.openUnlockSheet(ctx);
-    if (isGuest()) return askForAccount('unlock this episode');
     ctx.notice('');
-    api('/api/episodes/' + ctx.episode.id + '/unlock', 'POST')
-      .then(function () { ctx.onUnlocked(); })
-      .catch(function (err) {
-        if (err.status === 402) ctx.notice(t('notEnoughCoins', { n: ctx.episode.number }), true);
-        else if (err.status !== 401) ctx.notice(t('unlockFailed'), true);
+    closeSheet();
+    var e = ctx.episode, s = ctx.series;
+    var state = { balance: signedIn() ? me.profile.coinBalance : null, adsLeft: null, busy: false, message: '', error: false };
+    var prevFocus = document.activeElement;
+
+    // The scrim takes the dark ground in both looks, so it always dims.
+    var scrim = h('div', 'dark fixed inset-0 z-40 bg-ground/70');
+    var panel = h('div', 'fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto rounded-t-2xl border border-line bg-surface p-4 pb-6 text-fg');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'unlock-title');
+    panel.dataset.testid = 'unlock-sheet';
+
+    function close() {
+      if (!sheet || sheet.el !== panel) return;
+      sheet = null;
+      scrim.remove();
+      panel.remove();
+      document.removeEventListener('keydown', onKey);
+      document.body.classList.remove('overflow-hidden');
+      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus();
+    }
+    function onKey(ev) { if (ev.key === 'Escape' && !state.busy) close(); }
+    scrim.addEventListener('click', function () { if (!state.busy) close(); });
+
+    function fail(text) { state.busy = false; state.message = text; state.error = true; paint(); }
+
+    function option(cls, title, sub, testid, onClick, disabled) {
+      var btn = h('button', cls + ' w-full' + (sub ? ' flex-col gap-0 py-2' : ''), [
+        h('span', '', title),
+        sub ? h('span', 'text-small font-normal ' + (cls === 'btn-primary' ? 'text-on-accent' : 'text-muted'), sub) : null,
+      ]);
+      btn.type = 'button';
+      if (testid) btn.dataset.testid = testid;
+      btn.disabled = !!disabled || state.busy;
+      btn.addEventListener('click', onClick);
+      return btn;
+    }
+
+    function unlocked() {
+      close();
+      ctx.onUnlocked();
+    }
+
+    function payCoins() {
+      if (isGuest()) return askForAccount('unlock this episode');
+      state.busy = true; state.message = ''; paint();
+      api('/api/episodes/' + e.id + '/unlock', 'POST').then(function (r) {
+        setBalance(r.coinBalance);
+        unlocked();
+      }).catch(function (err) {
+        if (err.status === 402) {
+          refreshMe().then(function () { state.balance = me.profile.coinBalance; paint(); }, function () {});
+          fail(t('notEnoughCoins', { n: e.number }));
+        } else if (err.status === 401) { state.busy = false; paint(); }
+        else fail(t('unlockFailed'));
       });
+    }
+
+    function payBundle() {
+      if (isGuest()) return askForAccount('unlock these episodes');
+      state.busy = true; state.message = ''; paint();
+      api('/api/series/' + encodeURIComponent(s.slug) + '/unlock-all', 'POST', { expectedPrice: s.bundle.price }).then(function (r) {
+        setBalance(r.coinBalance);
+        unlocked();
+      }).catch(function (err) {
+        if (err.status === 409 && err.body && err.body.error === 'price_changed') {
+          s.bundle = err.body.bundle;
+          fail('The price changed. Check it and try again.');
+        } else if (err.status === 409) {
+          s.bundle = null;
+          fail('Every episode of this series is already unlocked.');
+        } else if (err.status === 402) fail('Not enough coins to unlock these episodes.');
+        else if (err.status === 401) { state.busy = false; paint(); }
+        else fail('Could not unlock. Try again.');
+      });
+    }
+
+    function watchAd() {
+      if (isGuest()) return askForAccount('unlock this episode');
+      state.busy = true; state.message = ''; paint();
+      api('/api/ads/sessions', 'POST', { episodeId: e.id }).then(function (r) {
+        state.adsLeft = r.remainingToday;
+        window.dtv.adProvider.show({
+          sessionId: r.sessionId,
+          minSeconds: r.minSeconds,
+          label: 'Episode ' + e.number,
+          onComplete: function (payload) {
+            api('/api/ads/sessions/' + r.sessionId + '/complete', 'POST', payload || {}).then(function () {
+              close();
+              if (s) navigate('/watch/' + e.id, { seriesSlug: s.slug });
+              else ctx.onUnlocked();
+            }).catch(function (err) {
+              if (err.status === 429) { state.adsLeft = 0; fail('No ad unlocks left today. Come back tomorrow.'); }
+              else if (err.status === 425) fail('The ad did not finish. Try again.');
+              else fail('Could not unlock. Try again.');
+            });
+          },
+          onCancel: function () {
+            state.busy = false;
+            state.message = 'Ad skipped. The episode is still locked.';
+            state.error = false;
+            paint();
+          },
+          onError: function () { fail('The ad could not play. Try again.'); },
+        });
+      }).catch(function (err) {
+        if (err.status === 429) { state.adsLeft = 0; fail('No ad unlocks left today. Come back tomorrow.'); }
+        else if (err.status === 409) unlocked();
+        else if (err.status === 401) { state.busy = false; paint(); }
+        else fail('Could not start the ad. Try again.');
+      });
+    }
+
+    function buyCoins() {
+      close();
+      navigate('/store');
+    }
+
+    var title = h('h2', 'text-heading', 'Unlock episode ' + e.number);
+    title.id = 'unlock-title';
+    title.tabIndex = -1;
+
+    var body = h('div', 'flex flex-col gap-3');
+    panel.append(
+      h('div', 'mx-auto h-1 w-10 rounded-full bg-line'),
+      title,
+      h('p', 'text-small text-muted', e.title + (s ? ' · ' + s.title : '')),
+      body);
+
+    function paint() {
+      var known = state.balance !== null;
+      var need = known ? e.coinPrice - state.balance : 0;
+      var short = need > 0;
+      var hadFocus = body.contains(document.activeElement);
+      var children = [];
+      if (known) {
+        children.push(h('div', 'flex items-center justify-between rounded-lg bg-raised px-3 py-2', [
+          h('span', 'text-small text-muted', 'Your balance'),
+          h('strong', 'text-small', coins(state.balance)),
+        ]));
+      }
+      children.push(option(short ? 'btn-secondary' : 'btn-primary', 'Unlock for ' + coins(e.coinPrice),
+        short ? 'You need ' + count(need) + ' more ' + (need === 1 ? 'coin' : 'coins') : null,
+        'unlock-coins', payCoins, short));
+      if (s && s.bundle && s.bundle.episodeCount >= 2) {
+        var b = s.bundle;
+        children.push(option('btn-secondary', 'Unlock all ' + b.episodeCount + ' remaining episodes',
+          coins(b.price) + ' · save ' + count(b.savings), 'unlock-all', payBundle, known && state.balance < b.price));
+      }
+      var noAds = state.adsLeft === 0;
+      children.push(option('btn-secondary', 'Watch an ad to unlock',
+        noAds ? 'No ads left today. Come back tomorrow.' : state.adsLeft === null ? null : state.adsLeft + ' left today',
+        'unlock-ad', watchAd, noAds));
+      children.push(option(short ? 'btn-primary' : 'btn-secondary', 'Buy coins', null, 'unlock-buy', buyCoins));
+      var later = option('btn-secondary', 'Not now', null, null, close);
+      later.disabled = state.busy;
+      children.push(later);
+      var msg = h('p', 'text-small ' + (state.error ? 'text-danger' : 'text-muted'), state.message);
+      msg.setAttribute('role', 'status');
+      children.push(msg);
+      body.replaceChildren.apply(body, children);
+      if (hadFocus) title.focus();
+    }
+
+    paint();
+    document.body.appendChild(scrim);
+    document.body.appendChild(panel);
+    document.body.classList.add('overflow-hidden');
+    document.addEventListener('keydown', onKey);
+    sheet = { el: panel, close: close };
+    title.focus();
+
+    if (signedIn()) {
+      refreshMe().then(function () { state.balance = me.profile.coinBalance; paint(); }, function () {});
+      api('/api/ads/quota').then(function (q) { state.adsLeft = q.remainingToday; paint(); }, function () {});
+    }
   }
 
   // ── Detail ────────────────────────────────────────────────────────────
@@ -1255,6 +1514,304 @@
     };
     start();
     return box;
+  }
+
+  // ── Coins ───────────────────────────────────────────────────────────
+  // The balance, the daily check-in and the coin store. Buying opens Stripe
+  // Checkout in a new tab (it cannot run inside the app frame); Stripe sends
+  // the person back to /store?checkout=<session>, and the page asks the
+  // server until the coins are credited.
+  var CHECKOUT_KEY = 'dtv.checkout';
+  var polling = null;
+
+  function backLink(path, label) {
+    return navLink(path, 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', label);
+  }
+
+  function price(pkg) {
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: pkg.currency.toUpperCase() }).format(pkg.amountCents / 100); }
+    catch (_) { return (pkg.amountCents / 100).toFixed(2) + ' ' + pkg.currency.toUpperCase(); }
+  }
+
+  function loadingStore() {
+    return h('div', 'flex flex-col gap-6', [
+      h('div', 'skeleton h-5 w-24'),
+      h('div', 'skeleton h-8 w-32'),
+      h('div', 'skeleton h-5 w-40'),
+      h('div', 'skeleton h-40 w-full'),
+      h('div', 'skeleton h-56 w-full'),
+    ]);
+  }
+
+  /** Ask the server where a purchase stands, every 2 s for up to 30 s. */
+  function pollPurchase(sessionId, say) {
+    if (polling === sessionId) return;
+    polling = sessionId;
+    var tries = 0;
+    say('Checking your payment…', false);
+    (function tick() {
+      if (polling !== sessionId || location.pathname !== '/store') { if (polling === sessionId) polling = null; return; }
+      api('/api/store/purchases/' + encodeURIComponent(sessionId)).then(function (r) {
+        if (polling !== sessionId) return;
+        if (r.status === 'credited') {
+          polling = null;
+          try { sessionStorage.removeItem(CHECKOUT_KEY); } catch (_) {}
+          setBalance(r.coinBalance);
+          renderStore(coins(r.coins) + ' added.');
+          return;
+        }
+        if (++tries >= 15) {
+          polling = null;
+          say('Still waiting on Stripe. Your coins will appear here once payment is confirmed.', false);
+          return;
+        }
+        setTimeout(tick, 2000);
+      }).catch(function (err) {
+        polling = null;
+        if (err.status === 404) { try { sessionStorage.removeItem(CHECKOUT_KEY); } catch (_) {} return say('', false); }
+        say('Could not check your payment. Reload this page to check again.', true);
+      });
+    })();
+  }
+
+  // Back from the Stripe tab: check on the payment that was started here.
+  window.addEventListener('focus', function () {
+    if (location.pathname !== '/store' || polling) return;
+    var pending = null;
+    try { pending = sessionStorage.getItem(CHECKOUT_KEY); } catch (_) {}
+    if (pending && storeNotice) pollPurchase(pending, storeNotice);
+  });
+  var storeNotice = null;
+
+  function checkInPanel(c, onClaim) {
+    var days = h('ol', 'grid grid-cols-7 gap-1.5');
+    c.rewards.forEach(function (reward, i) {
+      var day = i + 1;
+      var done = day <= c.streakDay;
+      var next = !c.claimedToday && day === c.nextDay;
+      var cls = done ? 'border border-accent bg-accent text-on-accent'
+        : next ? 'border-2 border-accent bg-surface text-fg'
+        : 'border border-line bg-raised text-muted';
+      var li = h('li', 'flex flex-col items-center rounded-lg py-1.5 ' + cls, [
+        h('span', 'text-small font-semibold', String(day)),
+        h('span', 'text-small', String(reward)),
+      ]);
+      li.setAttribute('aria-label', 'Day ' + day + ', ' + coins(reward) + (done ? ', collected' : next ? ', today' : ''));
+      days.appendChild(li);
+    });
+    var line = c.claimedToday
+      ? 'Checked in today. Come back tomorrow for ' + coins(c.nextReward) + '.'
+      : c.nextDay > 1
+        ? 'Today is day ' + c.nextDay + ' of your streak. Miss a day and it starts again from day 1.'
+        : 'Check in every day to build a streak. Miss a day and it starts again from day 1.';
+    var children = [days, h('p', 'text-small text-muted', line)];
+    if (!c.claimedToday) {
+      var btn = h('button', 'btn-primary w-full', 'Check in for ' + coins(c.nextReward));
+      btn.type = 'button';
+      btn.dataset.testid = 'check-in';
+      btn.addEventListener('click', function () { onClaim(btn); });
+      children.push(btn);
+    }
+    return h('div', 'card flex flex-col gap-3', children);
+  }
+
+  function renderStore(flash) {
+    show(loadingStore());
+    var params = new URLSearchParams(location.search);
+    var returned = params.get('checkout');
+    if (returned) {
+      // Drop ?checkout= so a reload does not repeat it; keep the platform's token.
+      params.delete('checkout');
+      var rest = params.toString();
+      history.replaceState(history.state, '', location.pathname + (rest ? '?' + rest : ''));
+      if (returned === 'cancelled') {
+        flash = 'Payment cancelled. Nothing was charged.';
+        try { sessionStorage.removeItem(CHECKOUT_KEY); } catch (_) {}
+      } else try { sessionStorage.setItem(CHECKOUT_KEY, returned); } catch (_) {}
+    }
+    var mine = signedIn();
+    Promise.all([
+      api('/api/store'),
+      mine ? refreshMe() : null,
+      mine ? api('/api/me/check-in') : null,
+    ]).then(function (res) {
+      if (location.pathname !== '/store') return;
+      var store = res[0], checkIn = res[2];
+      var message = h('p', 'text-small text-muted', flash || '');
+      message.setAttribute('role', 'status');
+      function say(text, isError, link) {
+        message.className = 'text-small ' + (isError ? 'text-danger' : 'text-muted');
+        message.textContent = text;
+        if (link) message.append(' ', link);
+      }
+      storeNotice = say;
+
+      var balance = mine
+        ? h('p', 'text-body text-muted', ['Your balance: ', h('strong', 'text-fg', coins(me.profile.coinBalance))])
+        : h('p', 'text-body text-muted', 'Make an account to collect and spend coins.');
+      balance.dataset.testid = 'store-balance';
+
+      var checkInSection = h('section', '', [
+        h('h2', 'section-label', 'Daily check-in'),
+        checkInPanel(checkIn || { rewards: [10, 10, 15, 15, 20, 20, 50], streakDay: 0, claimedToday: false, nextDay: 1, nextReward: 10 }, function (btn) {
+          if (isGuest()) return askForAccount('check in');
+          btn.disabled = true;
+          api('/api/me/check-in', 'POST').then(function (r) {
+            setBalance(r.coinBalance);
+            renderStore(coins(r.reward) + ' added for day ' + r.streakDay + '.');
+          }).catch(function (err) {
+            if (err.status === 409) return renderStore();
+            btn.disabled = false;
+            if (err.status !== 401) say('Could not check in. Try again.', true);
+          });
+        }),
+      ]);
+
+      var list = h('ul', 'list');
+      list.dataset.testid = 'coin-packages';
+      store.packages.forEach(function (pkg) {
+        var label = h('span', 'flex flex-1 items-center gap-2 text-body', [icon('coin', 'h-4 w-4 text-accent'), coins(pkg.coins)]);
+        var end;
+        if (store.paymentsConfigured) {
+          end = h('button', 'btn-secondary', price(pkg));
+          end.type = 'button';
+          end.setAttribute('aria-label', 'Buy ' + coins(pkg.coins) + ' for ' + price(pkg));
+          end.addEventListener('click', function () { buy(pkg, end, say); });
+        } else {
+          end = h('span', 'text-body text-muted', price(pkg));
+        }
+        list.appendChild(h('li', 'list-row', [label, end]));
+      });
+      var storeBody = [h('h2', 'section-label', 'Coin store')];
+      if (!store.paymentsConfigured) {
+        var off = h('div', 'state-empty', [
+          h('h3', 'text-heading', 'Payments are not set up yet'),
+          h('p', 'text-body text-muted', 'Coin packages can be bought once this app’s Stripe keys are added. You can still earn coins with the daily check-in and unlock episodes by watching an ad.'),
+        ]);
+        off.dataset.testid = 'payments-not-configured';
+        storeBody.push(off, list);
+      } else {
+        storeBody.push(list, h('p', 'mt-2 px-1 text-small text-muted', 'Payment opens Stripe in a new tab. Your coins are added once payment is confirmed.'));
+      }
+
+      show(h('div', 'flex flex-col gap-6', [
+        backLink('/', 'All series'),
+        h('div', 'flex flex-col gap-1', [h('h1', 'text-title', 'Coins'), balance, message]),
+        checkInSection,
+        h('section', '', storeBody),
+        backLink('/history', 'Transaction history'),
+      ]));
+
+      var pending = null;
+      try { pending = sessionStorage.getItem(CHECKOUT_KEY); } catch (_) {}
+      if (mine && pending && returned !== 'cancelled' && !flash) pollPurchase(pending, say);
+    }).catch(function () {
+      if (location.pathname !== '/store') return;
+      show(errorState('Could not load your coins', function () { renderStore(); }, backLink('/', 'All series')));
+    });
+  }
+
+  function buy(pkg, btn, say) {
+    if (isGuest()) return askForAccount('buy coins');
+    // Open the tab inside the tap, so the browser allows it; fill it in once
+    // the server has made the Checkout Session.
+    var win = null;
+    try { win = window.open('', '_blank'); } catch (_) {}
+    btn.disabled = true;
+    say('Opening Stripe…', false);
+    api('/api/store/checkout', 'POST', { packageId: pkg.id }).then(function (r) {
+      btn.disabled = false;
+      try { sessionStorage.setItem(CHECKOUT_KEY, r.sessionId); } catch (_) {}
+      if (win && !win.closed) {
+        win.location.href = r.url;
+        say('Finish paying in the Stripe tab. Your coins are added here once payment is confirmed.', false);
+      } else {
+        // The browser blocked the new tab: a link the person taps opens it.
+        var link = h('a', 'font-medium text-accent underline', 'Open Stripe to pay');
+        link.href = r.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        say('Your browser kept Stripe from opening.', false, link);
+      }
+    }).catch(function (err) {
+      if (win) try { win.close(); } catch (_) {}
+      btn.disabled = false;
+      if (err.status === 503) return renderStore();
+      if (err.status !== 401) say('Could not start the payment. Try again.', true);
+    });
+  }
+
+  // ── Transaction history ─────────────────────────────────────────────
+  function renderHistory() {
+    var back = backLink('/store', 'Coins');
+    var title = h('h1', 'text-title', 'Transaction history');
+    var skel = h('div', 'flex flex-col gap-2', [0, 1, 2, 3, 4].map(function () { return h('div', 'skeleton h-14 w-full'); }));
+    show(h('div', 'flex flex-col gap-6', [back, title, skel]));
+    if (isGuest()) {
+      var join = h('button', 'btn-primary', 'Make an account');
+      join.type = 'button';
+      join.addEventListener('click', function () { askForAccount('see your transactions'); });
+      return show(h('div', 'flex flex-col gap-6', [back, title, h('div', 'state-empty', [
+        h('h2', 'text-heading', 'Your transactions are kept with your account'),
+        h('p', 'text-body text-muted', 'Make an account to collect and spend coins.'),
+        join,
+      ])]));
+    }
+    var when = function (iso) {
+      try { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso)); }
+      catch (_) { return iso; }
+    };
+    function row(t) {
+      var plus = t.amount > 0;
+      return h('li', 'list-row', [
+        h('div', 'flex min-w-0 flex-1 flex-col', [
+          h('span', 'text-body', t.label),
+          h('span', 'text-small text-muted', when(t.createdAt)),
+        ]),
+        h('span', 'text-body font-semibold ' + (plus ? 'text-accent' : 'text-fg'),
+          (plus ? '+' : '−') + count(Math.abs(t.amount))),
+      ]);
+    }
+    function load() {
+      api('/api/me/coin-transactions').then(function (data) {
+        if (location.pathname !== '/history') return;
+        if (!data.transactions.length) {
+          return show(h('div', 'flex flex-col gap-6', [back, title, h('div', 'state-empty', [
+            h('h2', 'text-heading', 'No transactions yet'),
+            h('p', 'text-body text-muted', 'Coins you earn and spend will show up here.'),
+            navLink('/store', 'btn-secondary', 'Go to Coins'),
+          ])]));
+        }
+        var list = h('ul', 'list');
+        list.dataset.testid = 'transaction-list';
+        data.transactions.forEach(function (t) { list.appendChild(row(t)); });
+        var more = h('div', 'flex flex-col items-stretch gap-2');
+        function paintMore(next) {
+          more.replaceChildren();
+          if (!next) return;
+          var btn = h('button', 'btn-secondary w-full', 'Show more');
+          btn.type = 'button';
+          btn.addEventListener('click', function () {
+            btn.disabled = true;
+            api('/api/me/coin-transactions?before=' + next).then(function (page) {
+              page.transactions.forEach(function (t) { list.appendChild(row(t)); });
+              paintMore(page.nextBefore);
+            }).catch(function () {
+              btn.disabled = false;
+              more.replaceChildren(h('p', 'px-1 text-small text-danger', 'Could not load more transactions. The ones above are up to date.'), btn);
+            });
+          });
+          more.appendChild(btn);
+        }
+        paintMore(data.nextBefore);
+        show(h('div', 'flex flex-col gap-6', [back, title, list, more]));
+      }).catch(function (err) {
+        if (location.pathname !== '/history') return;
+        if (err.status === 401) return;
+        show(errorState('Could not load your transactions', load, back));
+      });
+    }
+    load();
   }
 
   // ── Onboarding ────────────────────────────────────────────────────────
@@ -2119,8 +2676,11 @@
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
+    closeSheet();
     if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
     else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
+    else if (location.pathname === '/store') renderStore();
+    else if (location.pathname === '/history') renderHistory();
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
     else if (/^\/my-list\/history\/?$/.test(location.pathname)) renderMyList('history');
     else if (/^\/admin\/?$/.test(location.pathname)) renderAdminList();
