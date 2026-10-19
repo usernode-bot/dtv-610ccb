@@ -22,7 +22,7 @@ const opts = { skip: url ? false : 'DATABASE_URL not set' };
 const A = 987654321;
 const B = 987654322;
 
-test('schema is re-runnable and the seed is idempotent: 5 demo series x 20 episodes', opts, async () => {
+test('schema is re-runnable and the seed is idempotent: 11 demo series x 20 episodes', opts, async () => {
   const pool = new Pool({ connectionString: url });
   try {
     await migrate(pool);
@@ -32,10 +32,29 @@ test('schema is re-runnable and the seed is idempotent: 5 demo series x 20 episo
 
     const list = await listSeries(pool, null);
     const demo = list.filter((s) => s.isDemo);
-    assert.strictEqual(demo.length, 5);
+    assert.strictEqual(demo.length, DEMO_SERIES.length);
+    assert.strictEqual(demo.length, 11);
     for (const s of demo) assert.strictEqual(s.episodeCount, EPISODES_PER_SERIES);
     assert.strictEqual(demo.find((s) => s.slug === 'bakery-on-maple-street')!.freeEpisodeCount, 3);
     assert.ok((await listGenres(pool)).length >= 5);
+
+    // Browse metadata: country, format, rating, featured and release date.
+    const bakery = demo.find((s) => s.slug === 'bakery-on-maple-street')!;
+    assert.strictEqual(bakery.originalTitle, '메이플 거리의 빵집');
+    assert.strictEqual(bakery.country, 'KR');
+    assert.strictEqual(bakery.format, 'long');
+    assert.strictEqual(bakery.rating, 8.7);
+    assert.strictEqual(bakery.releasedOn, '2026-08-14');
+    assert.strictEqual(bakery.genreSlug, 'family-drama');
+    assert.ok(demo.filter((s) => s.isFeatured).length >= 1);
+    for (const [country, format] of [['CN', 'short'], ['CN', 'long'], ['KR', 'short'], ['KR', 'long']]) {
+      assert.ok(demo.some((s) => s.country === country && s.format === format), `${country} ${format}`);
+    }
+    // A short drama's episodes are minutes long, a long drama's most of an hour.
+    const garden = (await listEpisodes(pool, 'garden-club-mysteries', null))!;
+    assert.ok(garden.every((e) => e.durationSeconds < 600));
+    const tea = (await listEpisodes(pool, 'tea-house-by-the-river', null))!;
+    assert.ok(tea.every((e) => e.durationSeconds >= 2400));
     const ep = await pool.query(
       `SELECT video_url FROM episodes WHERE video_url IS NULL OR video_url NOT LIKE 'https://%.m3u8'`);
     assert.strictEqual(ep.rows.length, 0);
@@ -70,6 +89,10 @@ test('follows, unlocks and watch history are per person; locked streams stay hid
     assert.strictEqual((await getSeries(pool, slug, A))!.following, true);
     assert.strictEqual((await getSeries(pool, slug, B))!.following, false);
     assert.strictEqual((await listFollowed(pool, A)).length, 1);
+    const followed = (await listFollowed(pool, A))[0];
+    assert.strictEqual(followed.following, true);
+    assert.strictEqual(followed.country, 'KR');
+    assert.strictEqual(followed.format, 'long');
     assert.strictEqual((await listFollowed(pool, B)).length, 0);
     assert.strictEqual(await setFollow(pool, 'no-such-series', A, true), null);
 
@@ -161,7 +184,8 @@ test('routes: catalogue is public, /api/me needs a signed-in person', opts, asyn
     assert.strictEqual((await get('/api/genres')).status, 200);
     const series = await (await get('/api/series')).json() as any;
     assert.ok(series.series.length >= 5);
-    assert.strictEqual((await get('/api/series?genre=comedy').then((r) => r.json()) as any).series.length, 1);
+    assert.strictEqual((await get('/api/series?genre=comedy').then((r) => r.json()) as any).series.length,
+      DEMO_SERIES.filter((d) => d.genre === 'Comedy').length);
     const eps = await (await get(`/api/series/${DEMO_SERIES[0].slug}/episodes`)).json() as any;
     assert.strictEqual(eps.episodes.length, EPISODES_PER_SERIES);
     assert.strictEqual((await get(`/api/episodes/${eps.episodes[0].id}`)).status, 200);

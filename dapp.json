@@ -55,6 +55,49 @@
       ]
     },
     {
+      "id": "series.browse-shelves",
+      "name": "Browse shows the featured hero and drama shelves",
+      "path": "/",
+      "expectSelector": "[data-testid=featured-hero] [data-testid=featured-item]",
+      "expectText": "Chinese short dramas",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Country and format filters combine",
+      "path": "/?country=kr&format=long",
+      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile][data-format=long]",
+      "expectText": "Paper Crane Library"
+    },
+    {
+      "name": "Search finds a series by its original title",
+      "path": "/?q=%E6%B1%9F%E8%BE%B9",
+      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile]",
+      "expectText": "Tea House by the River"
+    },
+    {
+      "id": "series.no-results",
+      "name": "No matches offers Clear filters",
+      "path": "/?q=no-such-series-title",
+      "expectSelector": "[data-testid=no-results] [data-testid=clear-filters]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Cards carry a bookmark and the header counts My List",
+      "path": "/",
+      "expectSelector": "[data-testid=series-tile] ~ [data-testid=bookmark-button][aria-pressed]",
+      "expectText": "My List ("
+    },
+    {
       "name": "App header shows the Dtv title",
       "path": "/",
       "expectSelector": "[data-testid=app-header]",
