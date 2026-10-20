@@ -5,7 +5,7 @@
 
 import type { Pool } from 'pg';
 import type {
-  EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary,
+  BundleQuote, EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary,
 } from '../types';
 
 const SUMMARY_SQL = `
@@ -130,6 +130,24 @@ export async function getSeries(
 
   return {
     ...toSummary(r), synopsis: r.synopsis, viewCount: r.view_count, episodes, continueEpisode,
+    bundle: await bundleQuote(pool, r.id, userId),
+  };
+}
+
+/**
+ * The price of unlocking every remaining paid episode of a series (the same
+ * dtv_bundle_quote the unlock itself uses), or null with fewer than 2 left.
+ */
+export async function bundleQuote(
+  pool: Pool, seriesId: number, userId: number | null,
+): Promise<BundleQuote | null> {
+  const { rows } = await pool.query(
+    'SELECT episode_count, full_price, price FROM dtv_bundle_quote($1, $2)', [userId, seriesId]);
+  const q = rows[0];
+  if (!q || q.episode_count < 2) return null;
+  return {
+    episodeCount: q.episode_count, fullPrice: q.full_price, price: q.price,
+    savings: q.full_price - q.price,
   };
 }
 

@@ -7,8 +7,8 @@ import { requireUser, userId, wrap } from '../../lib/auth';
 import { trackEvent } from '../../lib/analytics';
 import { isAdmin } from '../../lib/admin';
 import {
-  ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory,
-  minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress,
+  claimCheckIn, ensureProfile, getCheckIn, listCoinTransactions, listFollowed, listUnlocked,
+  listWatchHistory, minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress, utcDay,
 } from '../../lib/me';
 
 export function meRouter(pool: Pool): express.Router {
@@ -75,8 +75,27 @@ export function meRouter(pool: Pool): express.Router {
     res.json({ episodes: await listUnlocked(pool, userId(req)!) });
   }));
 
+  // The ledger, newest first, 50 at a time: ?before=<nextBefore> for the next page.
   router.get('/coin-transactions', wrap(async (req, res) => {
-    res.json({ transactions: await listCoinTransactions(pool, userId(req)!) });
+    const before = req.query.before === undefined ? undefined : Number(req.query.before);
+    if (before !== undefined && (!Number.isInteger(before) || before < 1)) {
+      return void res.status(400).json({ error: 'invalid_cursor' });
+    }
+    res.json(await listCoinTransactions(pool, userId(req)!, before));
+  }));
+
+  // Daily check-in. The day is req.now's UTC date.
+  router.get('/check-in', wrap(async (req, res) => {
+    res.json(await getCheckIn(pool, userId(req)!, utcDay(req.now)));
+  }));
+  router.post('/check-in', wrap(async (req, res) => {
+    await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const day = utcDay(req.now);
+    const r = await claimCheckIn(pool, userId(req)!, day);
+    if (r === 'already_claimed') {
+      return void res.status(409).json({ error: 'already_claimed', checkIn: await getCheckIn(pool, userId(req)!, day) });
+    }
+    res.json({ ...r, checkIn: await getCheckIn(pool, userId(req)!, day) });
   }));
 
   return router;
