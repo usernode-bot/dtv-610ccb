@@ -3,8 +3,9 @@
 
 import type { Pool } from 'pg';
 import type {
-  CoinTransaction, EpisodeItem, Profile, SeriesSummary, WatchHistoryItem,
+  CheckInState, CoinTransaction, EpisodeItem, Profile, SeriesSummary, WatchHistoryItem,
 } from '../types';
+import { CHECK_IN_REWARDS } from './coin-config';
 
 const PROFILE_COLUMNS = 'id, username, avatar_url, coin_balance, favorite_genres, onboarded_at, created_at';
 
@@ -63,43 +64,56 @@ export async function saveFavoriteGenres(
 }
 
 /**
- * Spend coins to unlock a paid episode: one ledger row and one unlock, in a
- * single transaction. Unlocking a free or already unlocked episode costs
- * nothing. The profile must exist (ensureProfile first).
+ * Spend coins to unlock a paid episode (dtv_unlock_episode: one ledger row
+ * and one unlock under a lock on the profile). Unlocking a free or already
+ * unlocked episode costs nothing (spent 0). The profile must exist (ensureProfile first).
  */
 export async function unlockEpisode(
   pool: Pool, userId: number, episodeId: number,
-): Promise<{ coinBalance: number } | 'not_found' | 'not_enough_coins'> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const ep = await client.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
-    if (!ep.rows.length) { await client.query('ROLLBACK'); return 'not_found'; }
-    const price: number = ep.rows[0].coin_price;
-    const me = await client.query(
-      'SELECT coin_balance FROM profiles WHERE id = $1 FOR UPDATE', [userId]);
-    const balance: number = me.rows[0].coin_balance;
-    const have = await client.query(
-      'SELECT 1 FROM unlocked_episodes WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
-    if (price === 0 || have.rows.length) { await client.query('COMMIT'); return { coinBalance: balance }; }
-    if (balance < price) { await client.query('ROLLBACK'); return 'not_enough_coins'; }
-    const tx = await client.query(
-      `INSERT INTO coin_transactions (user_id, amount, type, episode_id)
-       VALUES ($1, $2, 'unlock', $3) RETURNING id`, [userId, -price, episodeId]);
-    await client.query(
-      `INSERT INTO unlocked_episodes (user_id, episode_id, coin_transaction_id) VALUES ($1, $2, $3)`,
-      [userId, episodeId, tx.rows[0].id]);
-    const upd = await client.query(
-      'UPDATE profiles SET coin_balance = coin_balance - $2 WHERE id = $1 RETURNING coin_balance',
-      [userId, price]);
-    await client.query('COMMIT');
-    return { coinBalance: upd.rows[0].coin_balance };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+): Promise<{ coinBalance: number; spent: number } | 'not_found' | 'not_enough_coins'> {
+  const { rows } = await pool.query(
+    'SELECT result, balance FROM dtv_unlock_episode($1, $2)', [userId, episodeId]);
+  const r = rows[0];
+  if (r.result === 'not_found' || r.result === 'not_enough_coins') return r.result;
+  if (r.result !== 'ok') return { coinBalance: r.balance, spent: 0 };
+  const price = await pool.query('SELECT coin_price FROM episodes WHERE id = $1', [episodeId]);
+  return { coinBalance: r.balance, spent: price.rows[0].coin_price };
+}
+
+/** The day "now" falls on in UTC, as YYYY-MM-DD: check-ins and ad limits count by it. */
+export function utcDay(now: Date): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/** The person's daily check-in as of `day` (YYYY-MM-DD, UTC). */
+export async function getCheckIn(pool: Pool, userId: number, day: string): Promise<CheckInState> {
+  const { rows } = await pool.query(
+    `SELECT check_in_streak, ($2::date - last_check_in_day) AS gap
+       FROM profiles WHERE id = $1`, [userId, day]);
+  const streak: number = rows[0]?.check_in_streak ?? 0;
+  const gap: number | null = rows[0]?.gap ?? null;
+  const claimedToday = gap !== null && gap <= 0;
+  // A streak carries on only from yesterday's (or today's) claim.
+  const current = gap !== null && gap <= 1 ? streak : 0;
+  const nextDay = (current % 7) + 1;
+  return {
+    streakDay: claimedToday || nextDay > 1 ? current : 0,
+    claimedToday,
+    nextDay,
+    nextReward: CHECK_IN_REWARDS[nextDay - 1],
+    rewards: CHECK_IN_REWARDS,
+  };
+}
+
+/** Claim today's check-in (dtv_claim_check_in). The profile must exist. */
+export async function claimCheckIn(
+  pool: Pool, userId: number, day: string,
+): Promise<{ reward: number; streakDay: number; coinBalance: number } | 'already_claimed'> {
+  const { rows } = await pool.query(
+    'SELECT result, balance, reward, day_number FROM dtv_claim_check_in($1, $2::date)', [userId, day]);
+  const r = rows[0];
+  if (r.result !== 'ok') return 'already_claimed';
+  return { reward: r.reward, streakDay: r.day_number, coinBalance: r.balance };
 }
 
 /** Series this person follows, most recently followed first. */
@@ -109,7 +123,7 @@ export async function listFollowed(pool: Pool, userId: number): Promise<SeriesSu
             COUNT(e.id)::int AS episode_count,
             COUNT(e.id) FILTER (WHERE e.coin_price = 0)::int AS free_episode_count
        FROM follows f
-       JOIN series s ON s.id = f.series_id
+       JOIN series s ON s.id = f.series_id AND s.is_published
        LEFT JOIN episodes e ON e.series_id = s.id
       WHERE f.user_id = $1
       GROUP BY s.id, f.created_at
@@ -145,13 +159,17 @@ export async function listWatchHistory(pool: Pool, userId: number): Promise<Watc
 
 /**
  * Record progress. The profile must exist (ensureProfile first). Returns false
- * when there is no such episode.
+ * when there is no such episode, else whether this save finished the episode
+ * (it was not already marked watched).
  */
 export async function saveProgress(
   pool: Pool, userId: number, episodeId: number, positionSeconds: number, completed: boolean,
-): Promise<boolean> {
+): Promise<false | { newlyCompleted: boolean }> {
   const ep = await pool.query('SELECT 1 FROM episodes WHERE id = $1', [episodeId]);
   if (!ep.rows.length) return false;
+  const prev = await pool.query(
+    'SELECT completed FROM watch_history WHERE user_id = $1 AND episode_id = $2', [userId, episodeId]);
+  const wasCompleted = prev.rows.length > 0 && prev.rows[0].completed === true;
   const { rows } = await pool.query(
     `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
      VALUES ($1, $2, $3, $4)
@@ -162,6 +180,36 @@ export async function saveProgress(
      RETURNING (xmax = 0) AS inserted`,
     [userId, episodeId, positionSeconds, completed]);
   // The first time a person starts an episode counts as one view of its series.
+  if (rows[0].inserted) {
+    await pool.query(
+      `UPDATE series SET view_count = view_count + 1
+        WHERE id = (SELECT series_id FROM episodes WHERE id = $1)`, [episodeId]);
+  }
+  return { newlyCompleted: completed && !wasCompleted };
+}
+
+/**
+ * Record that the person opened an episode to play it: a history row at
+ * position 0 the first time, otherwise only moves it to the top of their
+ * history (their saved position is kept). A locked episode they have not
+ * unlocked is not recorded. The profile must exist (ensureProfile first).
+ */
+export async function recordPlay(
+  pool: Pool, userId: number, episodeId: number,
+): Promise<true | 'not_found' | 'locked'> {
+  const ep = await pool.query(
+    `SELECT e.coin_price,
+            EXISTS (SELECT 1 FROM unlocked_episodes u
+                     WHERE u.user_id = $2 AND u.episode_id = e.id) AS unlocked
+       FROM episodes e WHERE e.id = $1`, [episodeId, userId]);
+  if (!ep.rows.length) return 'not_found';
+  if (ep.rows[0].coin_price > 0 && !ep.rows[0].unlocked) return 'locked';
+  const { rows } = await pool.query(
+    `INSERT INTO watch_history (user_id, episode_id, position_seconds, completed)
+     VALUES ($1, $2, 0, false)
+     ON CONFLICT (user_id, episode_id) DO UPDATE SET updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`, [userId, episodeId]);
+  // Same rule as saveProgress: the first start counts as one view.
   if (rows[0].inserted) {
     await pool.query(
       `UPDATE series SET view_count = view_count + 1
@@ -184,13 +232,44 @@ export async function listUnlocked(pool: Pool, userId: number): Promise<EpisodeI
   }));
 }
 
-export async function listCoinTransactions(pool: Pool, userId: number): Promise<CoinTransaction[]> {
+export const TRANSACTIONS_PAGE = 50;
+
+function transactionLabel(r: any): string {
+  switch (r.type) {
+    case 'unlock':
+      return r.series_title
+        ? `Unlocked ${r.series_title}, episode ${r.episode_number}` : 'Unlocked an episode';
+    case 'bundle':
+      return `Unlocked ${r.note || 'episodes'}${r.bundle_series_title ? ' of ' + r.bundle_series_title : ''}`;
+    case 'purchase':
+      return r.note || 'Bought coins';
+    case 'check_in':
+      return r.note || 'Daily check-in';
+    default:
+      return r.note || (r.amount > 0 ? 'Coins added' : 'Coins spent');
+  }
+}
+
+/** The person's ledger, newest first, 50 at a time; `before` is the last id of the previous page. */
+export async function listCoinTransactions(
+  pool: Pool, userId: number, before?: number,
+): Promise<{ transactions: CoinTransaction[]; nextBefore: number | null }> {
   const { rows } = await pool.query(
-    `SELECT id, amount, type, episode_id, note, created_at
-       FROM coin_transactions WHERE user_id = $1
-      ORDER BY created_at DESC, id DESC LIMIT 100`, [userId]);
-  return rows.map((r) => ({
-    id: Number(r.id), amount: r.amount, type: r.type, episodeId: r.episode_id,
-    note: r.note, createdAt: r.created_at.toISOString(),
-  }));
+    `SELECT t.id, t.amount, t.type, t.episode_id, t.series_id, t.note, t.created_at,
+            e.number AS episode_number, es.title AS series_title, bs.title AS bundle_series_title
+       FROM coin_transactions t
+       LEFT JOIN episodes e ON e.id = t.episode_id
+       LEFT JOIN series es ON es.id = e.series_id
+       LEFT JOIN series bs ON bs.id = t.series_id
+      WHERE t.user_id = $1 AND ($2::bigint IS NULL OR t.id < $2)
+      ORDER BY t.id DESC LIMIT $3`, [userId, before ?? null, TRANSACTIONS_PAGE + 1]);
+  const page = rows.slice(0, TRANSACTIONS_PAGE);
+  return {
+    transactions: page.map((r) => ({
+      id: Number(r.id), amount: r.amount, type: r.type, episodeId: r.episode_id,
+      seriesId: r.series_id, note: r.note, label: transactionLabel(r),
+      createdAt: r.created_at.toISOString(),
+    })),
+    nextBefore: rows.length > TRANSACTIONS_PAGE ? Number(page[page.length - 1].id) : null,
+  };
 }
