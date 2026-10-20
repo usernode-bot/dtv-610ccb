@@ -4,23 +4,27 @@
 import express from 'express';
 import type { Pool } from 'pg';
 import { requireUser, userId, wrap } from '../../lib/auth';
+import { trackEvent } from '../../lib/analytics';
+import { isAdmin } from '../../lib/admin';
 import {
-  ensureProfile, listCoinTransactions, listFollowed, listUnlocked, listWatchHistory,
-  minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress,
+  claimCheckIn, ensureProfile, getCheckIn, listCoinTransactions, listFollowed, listUnlocked,
+  listWatchHistory, minFavoriteGenres, recordPlay, saveFavoriteGenres, saveProgress, utcDay,
 } from '../../lib/me';
 
 export function meRouter(pool: Pool): express.Router {
   const router = express.Router();
   router.use(requireUser);
 
-  // Who is signed in, and whether the genre onboarding is still due (it is
-  // skipped while there are no genres to pick from).
+  // Who is signed in, whether the genre onboarding is still due (it is
+  // skipped while there are no genres to pick from), and whether they may
+  // manage series.
   router.get('/', wrap(async (req, res) => {
     const profile = await ensureProfile(pool, userId(req)!, String(req.user!.username));
     const minGenres = await minFavoriteGenres(pool);
     res.json({
       profile,
       onboarding: { required: !profile.onboardedAt && minGenres > 0, minGenres },
+      isAdmin: isAdmin(req),
     });
   }));
 
@@ -47,8 +51,11 @@ export function meRouter(pool: Pool): express.Router {
       return void res.status(400).json({ error: 'invalid_progress' });
     }
     await ensureProfile(pool, userId(req)!, String(req.user!.username));
-    const ok = await saveProgress(pool, userId(req)!, episodeId, position, req.body?.completed === true);
-    if (!ok) return void res.status(404).json({ error: 'not_found' });
+    const saved = await saveProgress(pool, userId(req)!, episodeId, position, req.body?.completed === true);
+    if (!saved) return void res.status(404).json({ error: 'not_found' });
+    if (saved.newlyCompleted) {
+      await trackEvent(pool, { userId: userId(req)!, name: 'complete', episodeId, positionSeconds: position });
+    }
     res.json({ saved: true });
   }));
 
@@ -60,6 +67,7 @@ export function meRouter(pool: Pool): express.Router {
     const result = await recordPlay(pool, userId(req)!, episodeId);
     if (result === 'not_found') return void res.status(404).json({ error: 'not_found' });
     if (result === 'locked') return void res.status(403).json({ error: 'locked' });
+    await trackEvent(pool, { userId: userId(req)!, name: 'play', episodeId });
     res.json({ saved: true });
   }));
 
@@ -67,8 +75,27 @@ export function meRouter(pool: Pool): express.Router {
     res.json({ episodes: await listUnlocked(pool, userId(req)!) });
   }));
 
+  // The ledger, newest first, 50 at a time: ?before=<nextBefore> for the next page.
   router.get('/coin-transactions', wrap(async (req, res) => {
-    res.json({ transactions: await listCoinTransactions(pool, userId(req)!) });
+    const before = req.query.before === undefined ? undefined : Number(req.query.before);
+    if (before !== undefined && (!Number.isInteger(before) || before < 1)) {
+      return void res.status(400).json({ error: 'invalid_cursor' });
+    }
+    res.json(await listCoinTransactions(pool, userId(req)!, before));
+  }));
+
+  // Daily check-in. The day is req.now's UTC date.
+  router.get('/check-in', wrap(async (req, res) => {
+    res.json(await getCheckIn(pool, userId(req)!, utcDay(req.now)));
+  }));
+  router.post('/check-in', wrap(async (req, res) => {
+    await ensureProfile(pool, userId(req)!, String(req.user!.username));
+    const day = utcDay(req.now);
+    const r = await claimCheckIn(pool, userId(req)!, day);
+    if (r === 'already_claimed') {
+      return void res.status(409).json({ error: 'already_claimed', checkIn: await getCheckIn(pool, userId(req)!, day) });
+    }
+    res.json({ ...r, checkIn: await getCheckIn(pool, userId(req)!, day) });
   }));
 
   return router;

@@ -63,7 +63,18 @@
     try { post('info', ['[dev-console ready]'], { kind: 'ready' }); } catch (_) {}
   })();
   </script>
+  <!-- dtv:head -->
   <title>Dtv</title>
+  <meta name="description" content="Watch movies and dramas together with the group.">
+  <!-- /dtv:head -->
+  <!-- The server swaps the block above for each page's own title,
+       description, canonical link and Open Graph tags (lib/seo.ts). -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0a09" media="(prefers-color-scheme: dark)">
+  <link rel="apple-touch-icon" href="/icons/icon-512.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Dtv">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
@@ -108,7 +119,16 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main id="app" class="mx-auto max-w-2xl px-4 py-6"></main>
+  <a id="skip-link" href="#app" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:text-body focus:text-fg focus:outline-none focus:ring-2 focus:ring-focus">Skip to content</a>
+  <!-- Painted before any JS runs, so the Dtv name and the way back are there
+       from the first frame; app.js swaps the back control per screen. -->
+  <header id="app-header" data-testid="app-header" class="sticky top-0 z-10 border-b border-line bg-ground">
+    <div id="app-header-bar" class="mx-auto flex min-h-14 max-w-6xl items-center gap-1 px-2 sm:px-4">
+      <span class="px-2 text-heading">Dtv</span>
+    </div>
+  </header>
+  <main id="app" class="mx-auto max-w-6xl px-4 py-6 sm:px-6 focus:outline-none" tabindex="-1" aria-busy="true"></main>
+  <script src="/js/i18n.js"></script>
   <script src="/js/player.js"></script>
   <script src="/js/app.js"></script>
 </body>
