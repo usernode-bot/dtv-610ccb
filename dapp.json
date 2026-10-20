@@ -55,6 +55,16 @@
       ]
     },
     {
+      "id": "browse.search",
+      "name": "Series browse offers a search box",
+      "path": "/",
+      "expectSelector": "[data-testid=series-search][type=search]",
+      "visual": true,
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
       "name": "App header shows the Dtv title",
       "path": "/",
       "expectSelector": "[data-testid=app-header]",

@@ -119,6 +119,7 @@
       ['path', { d: 'M3 10 2.4 6.6 19.1 3.7 19.7 7.1z' }],
       ['path', { d: 'M7.5 5.7 9 9' }], ['path', { d: 'M12.8 4.8 14.3 8.1' }]],
     back: [['path', { d: 'M15 18l-6-6 6-6' }]],
+    search: [['circle', { cx: 11, cy: 11, r: 7 }], ['path', { d: 'M20 20l-4-4' }]],
   };
 
   function icon(name, cls) {
@@ -312,10 +313,54 @@
           requestLink(),
         ]));
       } else {
+        var all = data.series;
+        var input = h('input', 'field pl-10');
+        input.type = 'search';
+        input.id = 'series-search';
+        input.placeholder = t('searchSeries');
+        input.setAttribute('aria-label', t('searchSeries'));
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.dataset.testid = 'series-search';
+        var search = h('div', 'relative', [
+          icon('search', 'pointer-events-none absolute left-3 top-3 h-5 w-5 text-muted'),
+          input,
+        ]);
+        page.appendChild(search);
         var grid = h('div', POSTER_GRID);
         grid.dataset.testid = 'series-grid';
-        data.series.forEach(function (s) { grid.appendChild(tile(s)); });
+        var noMatchTitle = h('h2', 'text-heading', '');
+        var clearBtn = h('button', 'btn-secondary mt-2', t('clearSearch'));
+        clearBtn.type = 'button';
+        clearBtn.dataset.testid = 'clear-search';
+        var noMatch = h('div', 'state-empty', [
+          noMatchTitle,
+          h('p', 'text-body text-muted', t('noMatchBody')),
+          clearBtn,
+        ]);
+        noMatch.setAttribute('role', 'status');
+        noMatch.dataset.testid = 'series-no-match';
+        noMatch.hidden = true;
+        function applySearch() {
+          var q = input.value.trim();
+          var needle = q.toLowerCase();
+          var hits = needle
+            ? all.filter(function (s) { return s.title.toLowerCase().indexOf(needle) !== -1; })
+            : all;
+          grid.replaceChildren.apply(grid, hits.map(tile));
+          grid.hidden = !hits.length;
+          noMatch.hidden = !!hits.length;
+          if (!hits.length) noMatchTitle.textContent = t('noMatchTitle', { q: q });
+        }
+        input.addEventListener('input', applySearch);
+        clearBtn.addEventListener('click', function () {
+          input.value = '';
+          applySearch();
+          input.focus();
+        });
+        applySearch();
         page.appendChild(grid);
+        page.appendChild(noMatch);
       }
       page.appendChild(languagePicker());
       show(page);
