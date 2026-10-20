@@ -43,16 +43,56 @@
   },
   "tests": [
     {
-      "id": "series.browse",
-      "name": "Series browse grid renders",
+      "id": "home.default",
+      "name": "Home shows the hero carousel and rows",
       "path": "/",
-      "expectSelector": "[data-testid=series-grid] [data-testid=series-tile]",
+      "expectSelector": "[data-testid=hero] [aria-roledescription=slide] ~ [aria-roledescription=slide]",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**",
+        "styles/**"
+      ]
+    },
+    {
+      "name": "Home shows the trending row",
+      "path": "/",
+      "expectSelector": "[data-testid=row-trending] [data-testid=series-card]"
+    },
+    {
+      "name": "Home shows a genre row",
+      "path": "/",
+      "expectSelector": "[data-testid=row-genre] [data-testid=series-card]"
+    },
+    {
+      "id": "series.browse",
+      "name": "Discover lists every series",
+      "path": "/#/discover",
+      "expectSelector": "[data-testid=series-grid]",
       "visual": true,
       "impact": [
         "public/**",
         "app/**",
         "lib/**"
       ]
+    },
+    {
+      "id": "discover.search",
+      "name": "Discover search finds a series by title",
+      "path": "/#/discover?q=robot",
+      "expectText": "1 series",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Discover shows genre chips",
+      "path": "/#/discover",
+      "expectSelector": "[data-testid=genre-chips] [data-genre=comedy]"
     },
     {
       "name": "App header shows the Dtv title",
@@ -150,8 +190,8 @@
       "expectText": "Transaction history"
     },
     {
-      "name": "Browse shows the coin balance",
-      "path": "/",
+      "name": "Profile shows the coin balance",
+      "path": "/profile",
       "expectSelector": "[data-testid=coin-balance]"
     },
     {
@@ -160,9 +200,9 @@
       "expectSelector": "[data-testid=my-list-tab-history][aria-current=page]"
     },
     {
-      "name": "Browse links to My List",
+      "name": "Tab bar links to My list",
       "path": "/",
-      "expectSelector": "[data-testid=my-list-link]"
+      "expectSelector": "nav [data-tab=my-list]"
     },
     {
       "id": "seo.series-meta",
@@ -188,8 +228,8 @@
     },
     {
       "id": "browse.language",
-      "name": "Browse offers English and Indonesian",
-      "path": "/",
+      "name": "Profile offers English and Indonesian",
+      "path": "/profile",
       "expectSelector": "[data-testid=language-select] option[value=id]",
       "visual": true,
       "impact": [

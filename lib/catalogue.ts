@@ -8,7 +8,7 @@ import type {
   BundleQuote, EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary,
 } from '../types';
 
-const SUMMARY_SQL = `
+export const SUMMARY_SQL = `
   SELECT s.id, s.slug, s.title, s.synopsis, s.genre, s.cover_url, s.cover_tone, s.is_demo,
          s.view_count,
          COUNT(e.id)::int AS episode_count,
@@ -27,7 +27,7 @@ const EPISODE_SQL = `
     FROM episodes e
     JOIN series ps ON ps.id = e.series_id AND ps.is_published`;
 
-function toSummary(r: any): SeriesSummary {
+export function toSummary(r: any): SeriesSummary {
   return {
     id: r.id,
     slug: r.slug,
@@ -62,17 +62,22 @@ export async function listGenres(pool: Pool): Promise<Genre[]> {
   return rows;
 }
 
-/** All series, oldest first; optionally only one genre (by genre slug). */
+/**
+ * All series, oldest first; optionally only one genre (by genre slug) and only
+ * titles containing `query` (case-insensitive).
+ */
 export async function listSeries(
-  pool: Pool, userId: number | null, genreSlug?: string,
+  pool: Pool, userId: number | null, genreSlug?: string, query?: string,
 ): Promise<SeriesSummary[]> {
-  const { rows } = genreSlug
-    ? await pool.query(
-        `SELECT q.* FROM (${SUMMARY_SQL}) q
-           JOIN series s ON s.id = q.id
-           JOIN genres g ON g.id = s.genre_id
-          WHERE g.slug = $2 ORDER BY q.id`, [userId, genreSlug])
-    : await pool.query(`SELECT q.* FROM (${SUMMARY_SQL}) q ORDER BY q.id`, [userId]);
+  const q = (query || '').trim();
+  const { rows } = await pool.query(
+    `SELECT q.* FROM (${SUMMARY_SQL}) q
+       JOIN series s ON s.id = q.id
+       LEFT JOIN genres g ON g.id = s.genre_id
+      WHERE ($2::text IS NULL OR g.slug = $2)
+        AND ($3::text IS NULL OR q.title ILIKE '%' || $3 || '%')
+      ORDER BY q.id`,
+    [userId, genreSlug || null, q ? q.replace(/[\\%_]/g, '\\$&') : null]);
   return rows.map(toSummary);
 }
 

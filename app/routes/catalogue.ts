@@ -7,6 +7,7 @@ import { requireUser, userId, wrap } from '../../lib/auth';
 import {
   getEpisode, getSeries, listEpisodes, listGenres, listRelated, listSeries, setFollow,
 } from '../../lib/catalogue';
+import { getHomeFeed } from '../../lib/home';
 import { ensureProfile, unlockEpisode } from '../../lib/me';
 import { unlockSeriesBundle } from '../../lib/coins';
 import { CLIENT_EVENT_NAMES, episodeDropOff, trackEvent, type EventName } from '../../lib/analytics';
@@ -31,9 +32,29 @@ export function catalogueRouter(
     res.json({ genres: await forViewer(req, 'genres', () => listGenres(pool)) });
   }));
 
+  // Who is looking, for the top bar and tabs. Answers a guest too (never 401),
+  // so asking does not open the platform's "Make an account" sheet. Read-only:
+  // the profile row is created by GET /api/me, not here.
+  router.get('/viewer', wrap(async (req, res) => {
+    const id = userId(req);
+    if (id === null) return void res.json({ signedIn: false });
+    const { rows } = await pool.query('SELECT coin_balance FROM profiles WHERE id = $1', [id]);
+    res.json({
+      signedIn: true,
+      username: String(req.user!.username),
+      coinBalance: rows.length ? rows[0].coin_balance : 0,
+    });
+  }));
+
+  // Everything the home screen shows, in one request.
+  router.get('/home', wrap(async (req, res) => {
+    res.json({ demo: opts.isStaging, ...await getHomeFeed(pool, userId(req), req.now) });
+  }));
+
   router.get('/series', wrap(async (req, res) => {
-    const genre = typeof req.query.genre === 'string' ? req.query.genre : undefined;
-    const series = await forViewer(req, 'series:' + (genre || ''), () => listSeries(pool, userId(req), genre));
+    const genre = typeof req.query.genre === 'string' && req.query.genre ? req.query.genre : undefined;
+    const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 100) : undefined;
+    const series = await forViewer(req, 'series:' + (genre || '') + ':' + (q || ''), () => listSeries(pool, userId(req), genre, q));
     res.json({ demo: opts.isStaging, series });
   }));
 

@@ -55,6 +55,27 @@ export interface SeriesDetail extends SeriesSummary {
   bundle: BundleQuote | null;
 }
 
+export interface GenreRow {
+  genre: Genre;
+  series: SeriesSummary[];
+}
+
+/** A series the viewer is partway through, and where they got to. */
+export interface ContinueWatchingItem extends SeriesSummary {
+  episodeNumber: number;
+  positionSeconds: number;
+  durationSeconds: number;
+}
+
+export interface HomeFeed {
+  featured: SeriesSummary[];
+  /** Null for a guest. */
+  continueWatching: ContinueWatchingItem[] | null;
+  trending: SeriesSummary[];
+  newReleases: SeriesSummary[];
+  genreRows: GenreRow[];
+}
+
 export interface Profile {
   id: number;
   username: string;

@@ -3,6 +3,8 @@
 // tinted placeholder tiles (cover_url stays empty until real artwork exists).
 // Streams are Apple's public HLS test streams.
 //
+// Every demo series is featured on the home screen, in this order.
+//
 // Idempotent: genres are keyed by slug, series by slug, episodes by
 // (series, number); re-running changes nothing. Never touches profiles,
 // follows, watch history, coins or unlocks.
@@ -109,8 +111,9 @@ export async function seedDemoCatalogue(pool: Pool): Promise<void> {
       [d.slug, d.title, d.synopsis, d.genre, genre.rows[0].id, d.coverTone]);
     // An older seed may have left the row without a genre link.
     const { rows } = await pool.query(
-      `UPDATE series SET genre_id = COALESCE(genre_id, $2) WHERE slug = $1 RETURNING id`,
-      [d.slug, genre.rows[0].id]);
+      `UPDATE series SET genre_id = COALESCE(genre_id, $2), featured_rank = COALESCE(featured_rank, $3)
+        WHERE slug = $1 RETURNING id`,
+      [d.slug, genre.rows[0].id, s + 1]);
     const seriesId = rows[0].id;
     await pool.query(
       'UPDATE series SET view_count = $2 WHERE id = $1 AND is_demo AND view_count = 0',

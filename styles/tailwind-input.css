@@ -90,6 +90,10 @@
     @apply block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-body text-fg
       placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-focus;
   }
+  /* A search field draws its own clear button; hide the browser's. */
+  .field[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
 
   /* A grouped list: <ul class="list"> of <li class="list-row">. The usual
      way to show several things; prefer it to a stack of cards. */
@@ -124,5 +128,15 @@
   .state-empty,
   .state-error {
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
+  }
+
+  /* A row that scrolls sideways (cards, chips, the hero): swipe or
+     trackpad, no scrollbar drawn under it. */
+  .scroll-row {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .scroll-row::-webkit-scrollbar {
+    display: none;
   }
 }

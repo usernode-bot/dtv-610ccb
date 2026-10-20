@@ -1,9 +1,10 @@
-// Dtv front end: a series browse screen, a series detail screen, the watch
-// screen, My List, the Coins page, the transaction history, the genre onboarding
-// and, for admins, the series manager. Path routes: "/" (browse),
+// Dtv front end: four tabs (Home, Discover, My list, Profile) over a series
+// detail screen, the watch screen, My List (followed series and watch
+// history), the Coins page, the transaction history, the genre onboarding
+// and, for admins, the series manager. Path routes: "/" (Home), "/discover?q=&genre=",
 // "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
-// (followed series), "/my-list/history" (watch history), "/store" (Coins),
-// "/history" (transactions) and "/admin" (series manager). Locked episodes open
+// (followed series), "/my-list/history" (watch history), "/profile", "/store"
+// (Coins), "/history" (transactions) and "/admin" (series manager). Locked episodes open
 // the unlock sheet. Coins only ever change on the server: the page asks for an
 // action and shows the balance the server answers with. Older "#/series/<slug>" links are
 // moved to the path form. Links marked data-nav navigate in place. Onboarding
@@ -20,19 +21,39 @@
 //
 // @typedef {{id:number, slug:string, title:string, genre:string, coverUrl:string|null,
 //   coverTone:number, episodeCount:number, freeEpisodeCount:number, following:boolean}} SeriesSummary
+// @typedef {SeriesSummary & {episodeNumber:number, positionSeconds:number,
+//   durationSeconds:number}} ContinueWatchingItem
 // @typedef {{id:number, number:number, title:string, durationSeconds:number,
 //   coinPrice:number, state:'free'|'unlocked'|'locked',
 //   positionSeconds?:number|null, watched?:boolean}} EpisodeItem
 
 (function () {
   var root = document.getElementById('app');
+  var coinsBadge = document.getElementById('coins-badge');
+  var coinsCountEl = document.getElementById('coins-count');
   var t = window.dtvI18n.t;
 
   // Neutral placeholder cover tints (colour tokens only), indexed by coverTone.
   var TONES = ['bg-accent/15', 'bg-raised', 'bg-accent/30', 'bg-line', 'bg-accent/20'];
+  var HERO_INTERVAL_MS = 5000;
+  var SEARCH_DEBOUNCE_MS = 250;
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // The iframe is opened with ?token=...; forward it on every API call.
   var token = new URLSearchParams(location.search).get('token');
+
+  /** Who is looking: {signedIn, username?, coinBalance?}; null until known. */
+  var viewer = null;
+  var viewerReady = null;
+
+  /** Undo work the current screen started (timers, listeners) before the next one. */
+  var cleanups = [];
+  /** Bumped on every navigation, so a slow load never paints over a newer screen. */
+  var screenId = 0;
+  /** In-app navigations so far, so "Back" only leaves the app's own history. */
+  var navCount = 0;
+  /** Set by the top bar's search button: focus the field when Discover opens. */
+  var focusSearch = false;
 
   // Who is looking: { profile, onboarding } once /api/me answers, 'guest' when
   // it says account_required, null when it could not be asked.
@@ -82,6 +103,15 @@
     return el;
   }
 
+  function button(cls, label, onClick) {
+    var b = h('button', cls, label);
+    b.type = 'button';
+    if (onClick) b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
   function episodesCount(n) { return t('episodesCount', { n: n }); }
   function coinsCount(n) { return t('coinsCount', { n: n }); }
 
@@ -105,8 +135,8 @@
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
-  // Small stroked icons in currentColor, 24-unit grid. Each shape is
-  // [tag, {attr: value}].
+  // Small stroked icons in currentColor, 24-unit grid (Lucide glyphs, ISC
+  // licence, for lock/search/x). Each shape is [tag, {attr: value}].
   var ICONS = {
     lock: [['rect', { x: 5, y: 11, width: 14, height: 10, rx: 2 }], ['path', { d: 'M8 11V7a4 4 0 0 1 8 0v4' }]],
     unlock: [['rect', { x: 5, y: 11, width: 14, height: 10, rx: 2 }], ['path', { d: 'M8 11V7a4 4 0 0 1 7.5-2' }]],
@@ -114,6 +144,8 @@
     play: [['path', { d: 'M7 5l12 7-12 7z' }]],
     check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     share: [['path', { d: 'M12 3v12' }], ['path', { d: 'M7 8l5-5 5 5' }], ['path', { d: 'M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6' }]],
+    search: [['circle', { cx: 11, cy: 11, r: 8 }], ['path', { d: 'm21 21-4.3-4.3' }]],
+    x: [['path', { d: 'M18 6 6 18' }], ['path', { d: 'm6 6 12 12' }]],
     bookmark: [['path', { d: 'M6 4h12v17l-6-4-6 4z' }]],
     film: [['rect', { x: 3, y: 10, width: 18, height: 10, rx: 2 }],
       ['path', { d: 'M3 10 2.4 6.6 19.1 3.7 19.7 7.1z' }],
@@ -162,6 +194,9 @@
     var box = h('div', 'flex items-center justify-center overflow-hidden ' + sizeCls + ' ' + (TONES[s.coverTone % TONES.length] || TONES[0]));
     if (s.coverUrl) {
       var img = h('img', 'h-full w-full object-cover');
+      // Covers are 2:3; the intrinsic size stops the layout jumping as they load.
+      img.width = 400;
+      img.height = 600;
       img.alt = '';
       img.decoding = 'async';
       if (priority) img.setAttribute('fetchpriority', 'high');
@@ -209,8 +244,8 @@
   // The bar in index.html, painted before any JS runs. It says "you are in
   // Dtv" and puts the way back in one fixed place; the Homeroom frame above
   // it owns leaving the app, so this header never has an exit control.
-  var headerBar = document.getElementById('app-header-bar');
-  var BACK_HOME = { path: '/', label: 'Back to all series' };
+  var headerBar = document.getElementById('app-header-back');
+  var BACK_HOME = { path: '/', label: 'Back to Home' };
 
   /** Show a back chevron at the left edge (back is {path, label} or null). */
   function setHeader(back) {
@@ -223,7 +258,6 @@
       a.dataset.testid = 'header-back';
       children.push(a);
     }
-    children.push(h('span', 'px-2 text-heading', 'Dtv'));
     headerBar.replaceChildren.apply(headerBar, children);
   }
 
@@ -244,9 +278,69 @@
     }
   }
 
-  // ── States ────────────────────────────────────────────────────────────
-  function loadingBrowse() {
-    return loadingNode(h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-7 w-32'), posterSkeleton(12)]));
+  /** Paint a screen, unless the viewer has moved on since `mine` began. */
+  function showIf(mine, node, back) {
+    if (mine !== screenId) return;
+    show(node, back);
+  }
+
+  /** "Free" when every episode is, "3 free" when the first few are, else nothing. */
+  function freeLabel(s) {
+    if (!s.freeEpisodeCount) return null;
+    return s.freeEpisodeCount >= s.episodeCount ? 'Free' : s.freeEpisodeCount + ' free';
+  }
+
+  // ── Shared pieces ─────────────────────────────────────────────────────
+  /**
+   * The series card: a 2:3 poster with the episode count and a free tag on it,
+   * then the title. `progress` (Continue watching) adds where the viewer got to.
+   * @param {SeriesSummary} s
+   * @param {{inRow?:boolean, progress?:ContinueWatchingItem}} [opts]
+   */
+  function seriesCard(s, opts) {
+    opts = opts || {};
+    var free = freeLabel(s);
+    var p = opts.progress;
+    var poster = h('div', 'relative', [
+      cover(s, 'aspect-[2/3] w-full rounded-lg border border-line', 'text-title text-fg'),
+      free ? h('span', 'absolute left-1.5 top-1.5 rounded bg-accent px-1.5 text-small font-medium text-on-accent', free) : null,
+      h('span', 'absolute bottom-2 right-1.5 rounded bg-ground/85 px-1.5 text-small text-fg', plural(s.episodeCount, 'ep', 'eps')),
+    ]);
+    if (p) {
+      var fill = h('div', 'h-full bg-accent');
+      fill.style.width = Math.min(100, Math.round(100 * p.positionSeconds / Math.max(1, p.durationSeconds))) + '%';
+      var bar = h('div', 'absolute inset-x-0 bottom-0 h-1 overflow-hidden rounded-b-lg bg-line', [fill]);
+      bar.setAttribute('aria-hidden', 'true');
+      poster.appendChild(bar);
+    }
+    var a = navLink('/series/' + encodeURIComponent(s.slug),
+      'flex flex-col gap-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ' +
+        (opts.inRow ? 'w-28 shrink-0 snap-start' : 'w-full'),
+      [
+        poster,
+        h('p', 'line-clamp-2 text-small font-medium', s.title),
+        p ? h('p', 'text-small text-muted', 'Episode ' + p.episodeNumber) : null,
+      ]);
+    a.dataset.testid = 'series-card';
+    return a;
+  }
+
+  /** A titled, horizontally scrolling row of cards. */
+  function seriesRow(title, items, opts) {
+    opts = opts || {};
+    var scroller = h('div', 'scroll-row -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4');
+    items.forEach(function (s) {
+      scroller.appendChild(seriesCard(s, { inRow: true, progress: opts.progress ? s : null }));
+    });
+    var section = h('section', 'flex flex-col gap-2', [
+      h('div', 'flex items-center justify-between gap-2', [
+        h('h2', 'text-heading', title),
+        opts.moreHref ? navLink(opts.moreHref, 'inline-flex min-h-11 items-center text-small font-medium text-accent', 'See all') : null,
+      ]),
+      scroller,
+    ]);
+    if (opts.testid) section.dataset.testid = opts.testid;
+    return section;
   }
 
   function loadingDetail() {
@@ -259,7 +353,7 @@
     ]));
   }
 
-  function errorState(message, retry) {
+  function errorState(message, retry, backLink) {
     var retryBtn = h('button', 'btn-primary', t('retry'));
     retryBtn.type = 'button';
     retryBtn.addEventListener('click', retry);
@@ -267,13 +361,25 @@
       h('h2', 'text-heading', message),
       h('p', 'text-body text-muted', t('checkConnection')),
       retryBtn,
+      backLink || null,
     ]);
   }
 
-  // ── Browse ────────────────────────────────────────────────────────────
+  function skeletonCards(n, inRow) {
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      out.push(h('div', 'flex flex-col gap-1.5 ' + (inRow ? 'w-28 shrink-0' : 'w-full'), [
+        h('div', 'skeleton aspect-[2/3] w-full rounded-lg'),
+        h('div', 'skeleton h-4 w-3/4'),
+      ]));
+    }
+    return out;
+  }
+
   // Where a request for a series is filed: this app's page on Homeroom.
   var REQUEST_URL = 'https://app.onhomeroom.com/#app/dtv-610ccb';
 
+  /** A series tile: cover, title, episode count and genre. */
   function tile(/** @type {SeriesSummary} */ s) {
     var a = navLink('/series/' + encodeURIComponent(s.slug), 'flex flex-col gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
       cover(s, 'aspect-[3/4] w-full rounded-xl border border-line', 'text-title text-fg'),
@@ -287,44 +393,350 @@
     return a;
   }
 
-  function renderBrowse() {
-    setTitle('');
-    show(loadingBrowse());
-    // The follow count fills the header button when it arrives; it never
-    // blocks or fails the catalogue itself.
-    var followsReq = isGuest() ? null : api('/api/me/follows');
-    api('/api/series').then(function (data) {
-      var page = h('div', 'flex flex-col gap-4');
-      var link = myListLink();
-      if (followsReq) followsReq.then(function (d) { link.setCount(d.series.length); }).catch(function () {});
-      page.appendChild(h('div', 'flex items-center justify-between gap-4', [
-        h('h1', 'text-title', t('series')),
-        h('div', 'flex items-center gap-4', [adminLink(), link, coinChip()]),
+  function skeletonGrid() {
+    return h('div', 'grid grid-cols-3 gap-3 sm:grid-cols-4', skeletonCards(6, false));
+  }
+
+  /** For a guest: what the screen would hold, and the way to make an account. */
+  function accountPrompt(title, body, action) {
+    return h('div', 'state-empty', [
+      h('h2', 'text-heading', title),
+      h('p', 'text-body text-muted', body),
+      button('btn-primary', 'Make an account', function () {
+        if (window.usernode && window.usernode.askForAccount) window.usernode.askForAccount({ action: action });
+      }),
+    ]);
+  }
+
+  // ── Top bar and tabs ──────────────────────────────────────────────────
+  function loadViewer() {
+    viewerReady = api('/api/viewer').then(function (v) {
+      viewer = v;
+      if (v.signedIn) {
+        coinsCountEl.textContent = String(v.coinBalance);
+        coinsBadge.setAttribute('aria-label', plural(v.coinBalance, 'coin', 'coins'));
+        coinsBadge.hidden = false;
+      }
+      return v;
+    }).catch(function () {
+      viewerReady = null; // ask again next time a screen needs it
+      return { signedIn: false, unknown: true };
+    });
+    return viewerReady;
+  }
+  function getViewer() { return viewerReady || loadViewer(); }
+
+  document.getElementById('search-button').addEventListener('click', function () { focusSearch = true; });
+
+  function markTab(name) {
+    document.querySelectorAll('[data-tab]').forEach(function (a) {
+      var on = a.getAttribute('data-tab') === name;
+      a.classList.toggle('text-accent', on);
+      a.classList.toggle('text-muted', !on);
+      if (on) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+  }
+
+  // ── Home ──────────────────────────────────────────────────────────────
+  function loadingHome() {
+    var rows = [];
+    for (var i = 0; i < 3; i++) {
+      rows.push(h('div', 'flex flex-col gap-2', [
+        h('div', 'skeleton h-7 w-40'),
+        h('div', '-mx-4 flex gap-3 overflow-hidden px-4', skeletonCards(4, true)),
       ]));
+    }
+    return loadingNode(h('div', 'flex flex-col gap-6', [h('div', 'skeleton aspect-[16/10] w-full rounded-xl')].concat(rows)));
+  }
+
+  /** The featured series, one slide each: swipe, tap a dot, or let it advance. */
+  function hero(items) {
+    var scroller = h('div', 'scroll-row -mx-4 flex snap-x snap-mandatory overflow-x-auto');
+    scroller.setAttribute('aria-live', 'off');
+    var dots = h('div', 'flex justify-center');
+    var current = 0;
+
+    items.forEach(function (s, i) {
+      var free = freeLabel(s);
+      var slide = navLink('/series/' + encodeURIComponent(s.slug),
+        'block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
+          h('div', 'relative flex aspect-[16/10] w-full items-end gap-4 overflow-hidden rounded-xl border border-line bg-surface p-4', [
+            cover(s, 'aspect-[2/3] w-24 shrink-0 rounded-lg border border-line', 'text-title text-fg'),
+            h('div', 'flex min-w-0 flex-col items-start gap-1', [
+              free ? h('span', 'rounded bg-accent px-1.5 text-small font-medium text-on-accent', free) : null,
+              h('h2', 'line-clamp-2 text-title', s.title),
+              h('p', 'text-small text-muted', [s.genre, plural(s.episodeCount, 'episode', 'episodes')].filter(Boolean).join(' · ')),
+            ]),
+          ]),
+        ]);
+      var wrap = h('div', 'w-full shrink-0 snap-center px-4', [slide]);
+      wrap.setAttribute('role', 'group');
+      wrap.setAttribute('aria-roledescription', 'slide');
+      wrap.setAttribute('aria-label', (i + 1) + ' of ' + items.length + ': ' + s.title);
+      scroller.appendChild(wrap);
+
+      var dot = button('inline-flex min-h-11 min-w-11 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [
+        h('span', 'block h-2 rounded-full'),
+      ], function () { goTo(i, true); });
+      dot.setAttribute('aria-label', 'Show ' + s.title);
+      dots.appendChild(dot);
+    });
+
+    function paintDots() {
+      [].forEach.call(dots.children, function (d, i) {
+        d.firstChild.className = 'block h-2 rounded-full ' + (i === current ? 'w-5 bg-accent' : 'w-2 bg-line');
+        if (i === current) d.setAttribute('aria-current', 'true');
+        else d.removeAttribute('aria-current');
+      });
+    }
+
+    function goTo(i, byUser) {
+      current = (i + items.length) % items.length;
+      scroller.scrollTo({ left: current * scroller.clientWidth, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+      paintDots();
+      if (byUser) pause();
+    }
+
+    scroller.addEventListener('scroll', function () {
+      var i = Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth));
+      if (i !== current && i >= 0 && i < items.length) { current = i; paintDots(); }
+    }, { passive: true });
+
+    // Auto-play: advance every few seconds, hold off for a while after the
+    // viewer touches it, and never while hidden or with reduced motion.
+    var timer = null;
+    var resumeAt = 0;
+    function pause() { resumeAt = Date.now() + HERO_INTERVAL_MS * 2; }
+    scroller.addEventListener('pointerdown', pause, { passive: true });
+    scroller.addEventListener('touchstart', pause, { passive: true });
+    scroller.addEventListener('wheel', pause, { passive: true });
+    scroller.addEventListener('focusin', pause);
+    var hiddenInShell = false;
+    function onShellVisibility(e) { hiddenInShell = !!(e.detail && e.detail.hidden); }
+    window.addEventListener('usernode:visibility-changed', onShellVisibility);
+    if (items.length > 1) {
+      timer = setInterval(function () {
+        if (reducedMotion.matches || document.hidden || hiddenInShell || Date.now() < resumeAt) return;
+        goTo(current + 1, false);
+      }, HERO_INTERVAL_MS);
+    }
+    cleanups.push(function () {
+      clearInterval(timer);
+      window.removeEventListener('usernode:visibility-changed', onShellVisibility);
+    });
+
+    paintDots();
+    var section = h('section', 'flex flex-col', [scroller, items.length > 1 ? dots : null]);
+    section.setAttribute('aria-roledescription', 'carousel');
+    section.setAttribute('aria-label', 'Featured series');
+    section.dataset.testid = 'hero';
+    return section;
+  }
+
+  function renderHome() {
+    var mine = screenId;
+    showIf(mine, loadingHome());
+    api('/api/home').then(function (data) {
+      var page = h('div', 'flex flex-col gap-6');
+      page.dataset.testid = 'home';
       if (data.demo) {
         page.appendChild(h('p', 'text-small text-muted', t('stagingDemo')));
       }
-      if (!data.series.length) {
+      if (!data.featured.length) {
         page.appendChild(h('div', 'state-empty', [
           h('div', 'mb-2 flex h-20 w-20 items-center justify-center rounded-xl bg-accent/15 text-accent', [icon('film', 'h-10 w-10')]),
           h('h2', 'text-heading', t('noSeriesTitle')),
           h('p', 'text-body text-muted', t('noSeriesBody')),
           requestLink(),
         ]));
-      } else {
-        var grid = h('div', POSTER_GRID);
-        grid.dataset.testid = 'series-grid';
-        data.series.forEach(function (s) { grid.appendChild(tile(s)); });
-        page.appendChild(grid);
+        return showIf(mine, page);
       }
-      page.appendChild(languagePicker());
-      show(page);
-      if (refocusLanguage) {
-        refocusLanguage = false;
-        document.getElementById('language-select').focus();
+      page.appendChild(hero(data.featured));
+      if (data.continueWatching && data.continueWatching.length) {
+        page.appendChild(seriesRow('Continue watching', data.continueWatching, { progress: true, testid: 'row-continue' }));
       }
+      page.appendChild(seriesRow('Trending now', data.trending, { moreHref: '/discover', testid: 'row-trending' }));
+      page.appendChild(seriesRow('New releases', data.newReleases, { moreHref: '/discover', testid: 'row-new' }));
+      data.genreRows.forEach(function (row) {
+        page.appendChild(seriesRow('Top ' + row.genre.name, row.series, {
+          moreHref: '/discover?genre=' + encodeURIComponent(row.genre.slug), testid: 'row-genre',
+        }));
+      });
+      showIf(mine, page);
     }).catch(function () {
-      show(errorState(t('loadSeriesFailed'), renderBrowse));
+      showIf(mine, errorState('Could not load the home screen', renderHome, navLink('/discover', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Search series instead')));
+    });
+  }
+
+  // ── Discover (search) ─────────────────────────────────────────────────
+  function renderDiscover(params) {
+    var mine = screenId;
+    var q = params.get('q') || '';
+    var genre = params.get('genre') || '';
+    var seq = 0;
+    var debounce = null;
+
+    var input = h('input', 'field pl-10 pr-12');
+    input.type = 'search';
+    input.id = 'search-input';
+    input.placeholder = 'e.g. Bakery';
+    input.autocomplete = 'off';
+    input.enterKeyHint = 'search';
+    input.value = q;
+    var clear = button('absolute right-0 top-0 inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('x', 'h-5 w-5')], function () {
+      input.value = '';
+      onInput();
+      input.focus();
+    });
+    clear.setAttribute('aria-label', 'Clear search');
+    var label = h('label', 'section-label block', 'Search by title');
+    label.htmlFor = 'search-input';
+    var field = h('div', 'relative', [
+      h('span', 'pointer-events-none absolute left-3 top-0 flex h-11 items-center text-muted', [icon('search', 'h-5 w-5')]),
+      input,
+      clear,
+    ]);
+
+    var chips = h('div', 'scroll-row -mx-4 flex gap-2 overflow-x-auto px-4');
+    chips.setAttribute('role', 'group');
+    chips.setAttribute('aria-label', 'Genre');
+    chips.dataset.testid = 'genre-chips';
+    var results = h('div', 'flex flex-col gap-3', [skeletonGrid()]);
+    results.setAttribute('aria-live', 'polite');
+
+    function chip(name, slug) {
+      var b = button('', name, function () {
+        genre = slug;
+        paintChips();
+        load();
+      });
+      b.dataset.genre = slug;
+      return b;
+    }
+    function paintChips() {
+      [].forEach.call(chips.children, function (b) {
+        var on = b.dataset.genre === genre;
+        b.className = 'inline-flex min-h-11 shrink-0 items-center rounded-full border px-4 text-small font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ' +
+          (on ? 'border-accent bg-accent text-on-accent' : 'border-line bg-surface text-fg hover:bg-raised');
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    chips.appendChild(chip('All', ''));
+    paintChips();
+    // The chips are a filter, not the screen: if they fail to load, search still works.
+    api('/api/genres').then(function (data) {
+      data.genres.forEach(function (g) { chips.appendChild(chip(g.name, g.slug)); });
+      paintChips();
+    }).catch(function () {});
+
+    function syncUrl() {
+      var p = new URLSearchParams();
+      if (input.value.trim()) p.set('q', input.value.trim());
+      if (genre) p.set('genre', genre);
+      var s = p.toString();
+      history.replaceState(null, '', withSearch('/discover' + (s ? '?' + s : '')));
+    }
+
+    function load() {
+      clear.hidden = !input.value;
+      syncUrl();
+      var req = ++seq;
+      results.replaceChildren(skeletonGrid());
+      var p = new URLSearchParams();
+      if (input.value.trim()) p.set('q', input.value.trim());
+      if (genre) p.set('genre', genre);
+      api('/api/series?' + p.toString()).then(function (data) {
+        if (req !== seq) return;
+        if (!data.series.length) {
+          results.replaceChildren(h('div', 'state-empty', [
+            h('h2', 'text-heading', 'No series match'),
+            h('p', 'text-body text-muted', 'Try another title or genre.'),
+            button('btn-secondary', 'Clear search and filters', function () {
+              input.value = '';
+              genre = '';
+              paintChips();
+              load();
+            }),
+          ]));
+          return;
+        }
+        var grid = h('div', 'grid grid-cols-3 gap-3 sm:grid-cols-4');
+        grid.dataset.testid = 'series-grid';
+        data.series.forEach(function (s) { grid.appendChild(seriesCard(s)); });
+        results.replaceChildren(h('p', 'text-small text-muted', plural(data.series.length, 'series', 'series')), grid);
+      }).catch(function () {
+        if (req !== seq) return;
+        results.replaceChildren(errorState('Could not search series', load));
+      });
+    }
+
+    function onInput() {
+      clearTimeout(debounce);
+      debounce = setTimeout(load, SEARCH_DEBOUNCE_MS);
+    }
+    input.addEventListener('input', onInput);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { clearTimeout(debounce); load(); input.blur(); }
+    });
+    cleanups.push(function () { clearTimeout(debounce); seq++; });
+
+    showIf(mine, h('div', 'flex flex-col gap-4', [
+      h('h1', 'text-title', 'Discover'),
+      h('div', '', [label, field]),
+      chips,
+      results,
+    ]));
+    if (focusSearch) { focusSearch = false; input.focus({ preventScroll: true }); }
+    load();
+  }
+
+  // ── Profile ───────────────────────────────────────────────────────────
+  function renderProfile() {
+    var mine = screenId;
+    showIf(mine, h('div', 'flex flex-col gap-4', [h('div', 'skeleton h-9 w-40'), h('div', 'skeleton h-24 w-full')]));
+    getViewer().then(function (v) {
+      if (!v.signedIn && !v.unknown) {
+        return showIf(mine, h('div', 'flex flex-col gap-4', [h('h1', 'text-title', 'Profile'),
+          accountPrompt('Your profile', 'Make an account to keep coins, follows and what you have watched.', 'see your profile'),
+          coinChip(), languagePicker()]));
+      }
+      return Promise.all([api('/api/me'), api('/api/me/watch-history')]).then(function (r) {
+        var profile = r[0].profile;
+        var history = r[1].history.slice(0, 20);
+        var watched = history.length
+          ? (function () {
+              var ul = h('ul', 'list');
+              history.forEach(function (w) {
+                ul.appendChild(h('li', '', [navLink('/series/' + encodeURIComponent(w.seriesSlug),
+                  'list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus', [
+                    h('div', 'min-w-0 flex-1', [
+                      h('p', 'truncate text-body', w.seriesTitle),
+                      h('p', 'text-small text-muted', 'Episode ' + w.episodeNumber + (w.completed ? ' · Watched' : '')),
+                    ]),
+                  ])]));
+              });
+              return ul;
+            })()
+          : h('div', 'state-empty', [
+              h('h3', 'text-heading', 'Nothing watched yet'),
+              h('p', 'text-body text-muted', 'Series you start watching show up here.'),
+              navLink('/', 'btn-secondary', 'Go to Home'),
+            ]);
+        showIf(mine, h('div', 'flex flex-col gap-6', [
+          h('h1', 'text-title', profile.username),
+          h('section', '', [
+            h('h2', 'section-label', 'Wallet'),
+            h('div', 'flex flex-wrap items-center gap-4', [coinChip(),
+              navLink('/history', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Transaction history')]),
+          ]),
+          h('section', '', [h('h2', 'section-label', 'Recently watched'), watched]),
+          adminLink(),
+          languagePicker(),
+        ]));
+      });
+    }).catch(function () {
+      showIf(mine, errorState('Could not load your profile', renderProfile));
     });
   }
 
@@ -378,18 +790,6 @@
     if (!isAdmin()) return null;
     var a = navLink('/admin', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Manage series');
     a.dataset.testid = 'admin-link';
-    return a;
-  }
-
-  // The My List entry on the browse header: a quiet bordered pill matching the
-  // unselected My List tabs, with a bookmark icon and (once known) the number
-  // of series the person follows. Guests and failed counts just see "My List".
-  function myListLink() {
-    var label = h('span', '', t('myList'));
-    label.dataset.testid = 'my-list-count-label';
-    var a = navLink('/my-list', 'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-line bg-surface px-4 text-body font-medium text-fg hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus', [icon('bookmark'), label]);
-    a.dataset.testid = 'my-list-link';
-    a.setCount = function (n) { label.textContent = t('myList') + ' (' + n + ')'; };
     return a;
   }
 
@@ -2205,10 +2605,22 @@
   }
 
   // ── Routing ───────────────────────────────────────────────────────────
-  // The query string (the platform's ?token=, ?un-theme=, ...) is kept on
-  // every in-app navigation so a reload still works.
+  // The rest of the query string (the platform's ?token=, ?un-theme=, ...) is
+  // kept on every in-app navigation so a reload still works; q and genre
+  // belong to Discover alone.
+  function withSearch(path) {
+    var qi = path.indexOf('?');
+    var params = new URLSearchParams(qi === -1 ? '' : path.slice(qi + 1));
+    new URLSearchParams(location.search).forEach(function (v, k) {
+      if (k !== 'q' && k !== 'genre' && !params.has(k)) params.set(k, v);
+    });
+    var qs = params.toString();
+    return (qi === -1 ? path : path.slice(0, qi)) + (qs ? '?' + qs : '');
+  }
+
   function navigate(path, state) {
-    history.pushState(state || null, '', path + location.search);
+    navCount++;
+    history.pushState(state || null, '', withSearch(path));
     focusHeading = true;
     route();
   }
@@ -2221,13 +2633,22 @@
   });
 
   function route() {
+    screenId++;
+    cleanups.splice(0).forEach(function (fn) { fn(); });
     endWatching();
+    markTab(/^\/discover\/?$/.test(location.pathname) ? 'discover'
+      : /^\/my-list(\/|$)/.test(location.pathname) ? 'my-list'
+      : /^\/profile\/?$/.test(location.pathname) ? 'profile'
+      : location.pathname === '/' ? 'home' : null);
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
     closeSheet();
     if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
     else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
+    else if (/^\/discover\/?$/.test(location.pathname)) renderDiscover(new URLSearchParams(location.search));
+    else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList();
+    else if (/^\/profile\/?$/.test(location.pathname)) renderProfile();
     else if (location.pathname === '/store') renderStore();
     else if (location.pathname === '/history') renderHistory();
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
@@ -2236,7 +2657,7 @@
     else if (/^\/admin\/series\/new\/?$/.test(location.pathname)) renderSeriesForm(null);
     else if ((m = /^\/admin\/series\/(\d+)\/?$/.exec(location.pathname))) renderSeriesForm(m[1]);
     else if ((m = /^\/admin\/series\/(\d+)\/episodes\/?$/.exec(location.pathname))) renderEpisodesAdmin(m[1]);
-    else renderBrowse();
+    else renderHome();
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();
   }
@@ -2290,7 +2711,7 @@
     } else if (/^\/my-list\/?$/.test(location.pathname)) {
       show(posterSkeleton(6), BACK_HOME);
     } else {
-      show(loadingBrowse());
+      show(loadingHome());
     }
   }
 
@@ -2298,6 +2719,7 @@
   // make an account and onboarding knows whether it is due. The language
   // (which may come from Homeroom) is settled at the same time.
   bootLoading();
+  loadViewer();
   var who = api('/api/me').then(function (data) { me = data; }, function (err) {
     me = err.status === 401 ? 'guest' : false;
   });
@@ -2307,7 +2729,8 @@
     pendingErrors = [];
     if (me) queued.forEach(sendError);
     applyChrome();
-    window.addEventListener('popstate', function () { focusHeading = true; route(); });
+    window.addEventListener('popstate', function () { navCount++; focusHeading = true; route(); });
     route();
   });
 })();
+
