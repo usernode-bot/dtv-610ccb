@@ -64,8 +64,11 @@ export interface Profile {
   favoriteGenres: string[];
   /** When onboarding was finished, or null while it is still due. */
   onboardedAt: string | null;
+  role: Role;
   createdAt: string;
 }
+
+export type Role = 'user' | 'admin';
 
 export interface WatchHistoryItem {
   episodeId: number;
@@ -78,7 +81,7 @@ export interface WatchHistoryItem {
   updatedAt: string;
 }
 
-export type CoinTransactionType = 'purchase' | 'unlock' | 'bundle' | 'check_in' | 'reward' | 'ad';
+export type CoinTransactionType = 'purchase' | 'unlock' | 'bundle' | 'check_in' | 'reward' | 'ad' | 'admin';
 
 export interface CoinTransaction {
   id: number;
@@ -125,6 +128,31 @@ export interface AuthUser {
   usernode_pubkey: string | null;
   locale: string | null;
   pur: string;
+}
+
+/** The admin dashboard's numbers. Coin figures are in coins. */
+export interface AdminStats {
+  totalUsers: number;
+  /** People who watched, followed, unlocked or bought coins on the request's UTC day. */
+  dailyActiveUsers: number;
+  /** Coins bought (purchase ledger rows), all time and on the request's UTC day. */
+  revenueCoins: number;
+  revenueCoinsToday: number;
+  /** Coins spent unlocking episodes, all time. */
+  coinsSpent: number;
+  topSeries: Array<{ slug: string; title: string; viewCount: number; coinsSpent: number }>;
+}
+
+/** A person as the admin user list shows them. */
+export interface AdminUser {
+  id: number;
+  username: string;
+  coinBalance: number;
+  role: Role;
+  banned: boolean;
+  /** Listed in ADMIN_USERNAMES: admin on every sign-in, so not demotable or bannable here. */
+  configuredAdmin: boolean;
+  createdAt: string;
 }
 
 /** One episode's row in a series' drop-off report (aggregates only, no people). */

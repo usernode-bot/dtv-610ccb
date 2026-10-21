@@ -33,6 +33,13 @@ const STATEMENTS: string[] = [
   `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS favorite_genres TEXT[] NOT NULL DEFAULT '{}'`,
   `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ`,
 
+  // Admin access. role is 'user' or 'admin' (ADMIN_USERNAMES grants admin on
+  // sign-in; admins can promote others). A banned person is refused by every
+  // API route.
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'
+     CHECK (role IN ('user', 'admin'))`,
+  `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE`,
+
   `CREATE TABLE IF NOT EXISTS genres (
      id         SERIAL PRIMARY KEY,
      slug       TEXT NOT NULL UNIQUE,
@@ -146,22 +153,27 @@ const STATEMENTS: string[] = [
   // Runs on every boot, so this list must always name every type in use:
   // a type missing here would be rewritten to 'reward'.
   `UPDATE coin_transactions SET type = 'reward'
-    WHERE type NOT IN ('purchase', 'unlock', 'bundle', 'check_in', 'reward', 'ad')`,
-  // Phase 6 widened the types (bundle, check_in): swap a narrower check.
+    WHERE type NOT IN ('purchase', 'unlock', 'bundle', 'check_in', 'reward', 'ad', 'admin')`,
+  // Phase 6 widened the types (bundle, check_in) and 'admin' (a balance
+  // adjustment made by an admin, its reason in note) came later: swap a
+  // narrower check.
   `DO $$ BEGIN
      IF EXISTS (SELECT 1 FROM pg_constraint
                  WHERE conname = 'coin_transactions_type_check'
                    AND conrelid = 'coin_transactions'::regclass
-                   AND pg_get_constraintdef(oid) NOT LIKE '%check_in%') THEN
+                   AND pg_get_constraintdef(oid) NOT LIKE '%check_in%'
+                   OR pg_get_constraintdef(oid) NOT LIKE '%admin%') THEN
        ALTER TABLE coin_transactions DROP CONSTRAINT coin_transactions_type_check;
      END IF;
      IF NOT EXISTS (SELECT 1 FROM pg_constraint
                      WHERE conname = 'coin_transactions_type_check'
                        AND conrelid = 'coin_transactions'::regclass) THEN
        ALTER TABLE coin_transactions ADD CONSTRAINT coin_transactions_type_check
-         CHECK (type IN ('purchase', 'unlock', 'bundle', 'check_in', 'reward', 'ad'));
+         CHECK (type IN ('purchase', 'unlock', 'bundle', 'check_in', 'reward', 'ad', 'admin'));
      END IF;
    END $$`,
+  // Which admin made an 'admin' adjustment.
+  `ALTER TABLE coin_transactions ADD COLUMN IF NOT EXISTS actor_id BIGINT`,
   // The series a bundle unlocked, and the purchase a 'purchase' row paid in.
   `ALTER TABLE coin_transactions ADD COLUMN IF NOT EXISTS series_id INTEGER REFERENCES series(id) ON DELETE SET NULL`,
   `ALTER TABLE coin_transactions ADD COLUMN IF NOT EXISTS coin_purchase_id BIGINT`,

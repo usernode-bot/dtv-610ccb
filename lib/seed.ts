@@ -126,3 +126,43 @@ export async function seedDemoCatalogue(pool: Pool): Promise<void> {
     }
   }
 }
+
+// Staging demo accounts, so the admin dashboard and user list have something
+// to show (profiles and the coin ledger are private, so staging starts with
+// them empty). Fake identities with fixed ids; never the person viewing the
+// preview, and none of them is an admin. Idempotent: profiles are keyed by id
+// and the ledger rows are only written for an account that has none.
+export const DEMO_ACCOUNTS = [
+  { id: 900001, username: 'staging-demo-viewer-1', bought: 120, unlocks: ['bakery-on-maple-street'] },
+  { id: 900002, username: 'staging-demo-viewer-2', bought: 60, unlocks: ['lighthouse-neighbors'] },
+  { id: 900003, username: 'staging-demo-viewer-3', bought: 0, unlocks: [] },
+  { id: 900004, username: 'staging-demo-viewer-4', bought: 200, unlocks: ['bakery-on-maple-street', 'road-trip-radio'] },
+];
+
+export async function seedDemoAccounts(pool: Pool): Promise<void> {
+  for (const a of DEMO_ACCOUNTS) {
+    await pool.query(
+      'INSERT INTO profiles (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [a.id, a.username]);
+    const has = await pool.query('SELECT 1 FROM coin_transactions WHERE user_id = $1 LIMIT 1', [a.id]);
+    if (has.rows.length || !a.bought) continue;
+    let balance = a.bought;
+    await pool.query(
+      `INSERT INTO coin_transactions (user_id, amount, type, note) VALUES ($1, $2, 'purchase', 'Staging demo purchase')`,
+      [a.id, a.bought]);
+    for (const slug of a.unlocks) {
+      // The first paid episode of the series.
+      const ep = await pool.query(
+        `SELECT e.id, e.coin_price FROM episodes e JOIN series s ON s.id = e.series_id
+          WHERE s.slug = $1 AND e.coin_price > 0 ORDER BY e.number LIMIT 1`, [slug]);
+      if (!ep.rows.length || ep.rows[0].coin_price > balance) continue;
+      const tx = await pool.query(
+        `INSERT INTO coin_transactions (user_id, amount, type, episode_id) VALUES ($1, $2, 'unlock', $3) RETURNING id`,
+        [a.id, -ep.rows[0].coin_price, ep.rows[0].id]);
+      await pool.query(
+        `INSERT INTO unlocked_episodes (user_id, episode_id, coin_transaction_id) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`, [a.id, ep.rows[0].id, tx.rows[0].id]);
+      balance -= ep.rows[0].coin_price;
+    }
+    await pool.query('UPDATE profiles SET coin_balance = $2 WHERE id = $1', [a.id, balance]);
+  }
+}

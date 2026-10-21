@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import type { Server } from 'http';
 import { createPool } from '../lib/db';
 import { migrate } from '../lib/schema';
-import { seedDemoCatalogue } from '../lib/seed';
+import { seedDemoAccounts, seedDemoCatalogue } from '../lib/seed';
 import { seedDramaCatalogue } from '../lib/seed-dramas';
 import { catalogueRouter } from './routes/catalogue';
 import { meRouter } from './routes/me';
@@ -16,7 +16,7 @@ import { storeRouter } from './routes/store';
 import { stripeWebhook } from './routes/stripe-webhook';
 import { livePayments } from '../lib/stripe';
 import { adminRouter } from './routes/admin';
-import { accountRequired, requireUser, upsertProfileOnce, userId } from '../lib/auth';
+import { accountRequired, adminPageGuard, attachAccount, requireUser, upsertProfileOnce, userId } from '../lib/auth';
 import { rateLimit } from '../lib/rate-limit';
 import { monitor } from '../lib/monitoring';
 import { SwrCache } from '../lib/cache';
@@ -194,6 +194,8 @@ app.use('/api', rateLimit());
 
 // A signed-in person gets a profiles row on their first authenticated request.
 app.use(upsertProfileOnce(pool));
+// Then their role and ban state; a banned person's API calls stop here.
+app.use(attachAccount(pool));
 
 // The page reports its own uncaught errors here; they go on to Sentry when
 // SENTRY_DSN is set (lib/monitoring.ts). Only the path is kept, never the
@@ -218,7 +220,7 @@ app.use('/api', storeRouter(pool, {
   // Back into this app through the platform, as share links are (see below).
   appUrl: (p) => PLATFORM_ORIGIN ? PLATFORM_ORIGIN + '/app/dtv-610ccb/full?path=' + encodeURIComponent(p) : null,
 }));
-// The series manager: admins only (ADMIN_USERNAMES).
+// The admin dashboard, user management and series manager: admins only.
 app.use('/api/admin', adminRouter(pool));
 app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING, cacheMs: 30_000 }));
 
@@ -274,6 +276,9 @@ async function headFor(req: Request): Promise<string> {
   }
   return renderHead(metaForPath(req.path, series), publicOrigin(req));
 }
+
+// The admin screens: only an admin gets the page; anyone else goes home.
+app.get(/^\/admin(?:\/|$)/, adminPageGuard);
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -349,10 +354,12 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 async function start(): Promise<void> {
   await migrate(pool);
   // Staging starts with empty tables for anything new, so give the preview a
-  // demo catalogue and the placeholder drama catalogue. Production is never seeded.
+  // demo catalogue, the placeholder drama catalogue and demo accounts.
+  // Production is never seeded.
   if (IS_STAGING) {
     await seedDemoCatalogue(pool);
     await seedDramaCatalogue(pool);
+    await seedDemoAccounts(pool);
   }
   server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.

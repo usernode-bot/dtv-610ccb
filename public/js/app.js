@@ -3,7 +3,9 @@
 // and, for admins, the series manager. Path routes: "/" (browse),
 // "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
 // (followed series), "/my-list/history" (watch history), "/store" (Coins),
-// "/history" (transactions) and "/admin" (series manager). Locked episodes open
+// "/history" (transactions) and, for admins only, the dashboard at "/admin",
+// "/admin/users", "/admin/users/<id>" and the series manager under
+// "/admin/series". Locked episodes open
 // the unlock sheet. Coins only ever change on the server: the page asks for an
 // action and shows the balance the server answers with. Older "#/series/<slug>" links are
 // moved to the path form. Links marked data-nav navigate in place. Onboarding
@@ -39,6 +41,7 @@
   var me = null;
 
   function isGuest() { return me === 'guest'; }
+  function isAdmin() { return !!(me && me.profile && me.profile.role === 'admin'); }
 
   /** Ask a guest to make an account (the platform's own sheet). */
   function askForAccount(action) {
@@ -422,7 +425,7 @@
   /** "Manage series", for admins only. */
   function adminLink() {
     if (!isAdmin()) return null;
-    var a = navLink('/admin', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Manage series');
+    var a = navLink('/admin', 'inline-flex min-h-11 items-center text-body font-medium text-accent', 'Admin');
     a.dataset.testid = 'admin-link';
     return a;
   }
@@ -1543,8 +1546,250 @@
     });
   }
 
+  // ── Banned ────────────────────────────────────────────────────────────
+  function bannedState() {
+    return h('div', 'state-error', [
+      h('h1', 'text-heading', 'Your account is suspended'),
+      h('p', 'text-body text-muted', 'An admin of Dtv has suspended this account, so series and episodes are not available to it.'),
+    ]);
+  }
+
+  // ── Admin ─────────────────────────────────────────────────────────────
+  // Only for admins: the server sends anyone else from /admin to the home
+  // screen and answers /api/admin with 403.
+  var ADMIN_ERRORS = {
+    invalid_amount: 'Enter a whole number of coins other than 0, like 50 or -20.',
+    reason_required: 'Write a reason (up to 200 characters).',
+    not_enough_coins: 'That would take the balance below 0.',
+    cannot_change_self: 'You cannot change your own access.',
+    configured_admin: 'This person is an admin through the ADMIN_USERNAMES setting. Remove them there first.',
+    cannot_ban_admin: 'Remove admin access before banning.',
+    not_found: 'This person no longer exists.',
+    admin_only: 'Your admin access was removed.',
+  };
+
+  var TX_LABEL = { purchase: 'Bought coins', unlock: 'Unlocked an episode', reward: 'Reward', ad: 'Watched an ad', admin: 'Admin adjustment' };
+
+  function formatNumber(n) {
+    try { return new Intl.NumberFormat().format(n); } catch (_) { return String(n); }
+  }
+
+  /** The admin screens' header: back to the app, the title, and Dashboard / Users / Series. */
+  function adminHeader(current) {
+    function tab(path, label, key) {
+      var a = navLink(path, 'inline-flex min-h-11 items-center px-1 text-body ' +
+        (key === current ? 'font-semibold text-fg' : 'text-muted hover:text-fg'), label);
+      if (key === current) a.setAttribute('aria-current', 'page');
+      return a;
+    }
+    return h('div', 'flex flex-col gap-2', [
+      navLink('/', 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', 'All series'),
+      h('h1', 'text-title', 'Admin'),
+      h('nav', 'flex gap-4 border-b border-line', [tab('/admin', 'Dashboard', 'dashboard'), tab('/admin/users', 'Users', 'users'), tab('/admin/series', 'Series', 'series')]),
+    ]);
+  }
+
+  function statRow(label, value, detail) {
+    return h('div', 'list-row justify-between', [
+      h('div', 'flex flex-col', [h('span', 'text-body', label), detail ? h('span', 'text-small text-muted', detail) : null]),
+      h('span', 'text-heading tabular-nums', value),
+    ]);
+  }
+
+  function renderAdminDashboard() {
+    var body = h('div', 'flex flex-col gap-6', [h('div', 'skeleton h-64 w-full'), h('div', 'skeleton h-48 w-full')]);
+    show(h('div', 'flex flex-col gap-6', [adminHeader('dashboard'), body]));
+    api('/api/admin/stats').then(function (data) {
+      var st = data.stats;
+      var stats = h('div', 'list', [
+        statRow('Total users', formatNumber(st.totalUsers)),
+        statRow('Daily active users', formatNumber(st.dailyActiveUsers), 'Watched, followed, unlocked or bought coins today (UTC)'),
+        statRow('Revenue', formatNumber(st.revenueCoins) + ' coins', 'Coins bought, ' + formatNumber(st.revenueCoinsToday) + ' today'),
+        statRow('Coins spent', formatNumber(st.coinsSpent), 'On episode unlocks'),
+      ]);
+      stats.dataset.testid = 'admin-stats';
+      var top;
+      if (!st.topSeries.length) {
+        top = h('div', 'state-empty', [
+          h('h2', 'text-heading', 'No series yet'),
+          h('p', 'text-body text-muted', 'Series appear here once they are added to the catalogue.'),
+        ]);
+      } else {
+        top = h('div', 'list', st.topSeries.map(function (s, i) {
+          return navLink('/series/' + encodeURIComponent(s.slug), 'list-row hover:bg-raised', [
+            h('span', 'w-6 text-small text-muted tabular-nums', String(i + 1)),
+            h('span', 'flex-1 text-body font-medium', s.title),
+            h('span', 'text-small text-muted text-right', compact(s.viewCount) + ' views · ' + formatNumber(s.coinsSpent) + ' coins'),
+          ]);
+        }));
+      }
+      body.replaceChildren(
+        h('section', '', [h('h2', 'section-label', 'Overview'), stats]),
+        h('section', '', [h('h2', 'section-label', 'Top series'), top]));
+    }).catch(function (err) {
+      if (err.status === 403) return navigate('/');
+      body.replaceChildren(errorState('Could not load the dashboard', renderAdminDashboard));
+    });
+  }
+
+  function roleBadges(u) {
+    return h('span', 'flex gap-2', [
+      u.role === 'admin' ? h('span', 'rounded-md bg-accent/15 px-2 py-0.5 text-small font-medium text-fg', 'Admin') : null,
+      u.banned ? h('span', 'rounded-md bg-danger px-2 py-0.5 text-small font-medium text-on-danger', 'Banned') : null,
+    ]);
+  }
+
+  function renderAdminUsers() {
+    var label = h('label', 'section-label block', 'Search by username');
+    var field = h('input', 'field');
+    field.id = 'admin-user-search';
+    field.type = 'search';
+    field.autocomplete = 'off';
+    field.placeholder = 'e.g. maya';
+    label.htmlFor = field.id;
+    var results = h('div', '');
+    show(h('div', 'flex flex-col gap-6', [adminHeader('users'), h('div', '', [label, field]), results]));
+
+    var seq = 0, timer = null;
+    function load() {
+      var mine = ++seq;
+      results.replaceChildren(h('div', 'skeleton h-48 w-full'));
+      api('/api/admin/users?q=' + encodeURIComponent(field.value.trim())).then(function (data) {
+        if (mine !== seq) return;
+        if (!data.users.length) {
+          results.replaceChildren(h('div', 'state-empty', field.value.trim()
+            ? [h('h2', 'text-heading', 'Nobody matches'), h('p', 'text-body text-muted', 'Check the spelling, or search for part of the username.')]
+            : [h('h2', 'text-heading', 'No users yet'), h('p', 'text-body text-muted', 'People appear here after they first open Dtv.')]));
+          return;
+        }
+        var list = h('div', 'list', data.users.map(function (u) {
+          return navLink('/admin/users/' + u.id, 'list-row hover:bg-raised', [
+            h('span', 'flex flex-1 flex-col', [
+              h('span', 'text-body font-medium', u.username),
+              h('span', 'text-small text-muted', formatNumber(u.coinBalance) + ' coins'),
+            ]),
+            roleBadges(u),
+          ]);
+        }));
+        list.dataset.testid = 'admin-user-list';
+        results.replaceChildren(list);
+      }).catch(function (err) {
+        if (mine !== seq) return;
+        if (err.status === 403) return navigate('/');
+        results.replaceChildren(errorState('Could not load users', load));
+      });
+    }
+    field.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(load, 250);
+    });
+    load();
+  }
+
+  function renderAdminUser(id) {
+    var back = navLink('/admin/users', 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent', 'All users');
+    show(h('div', 'flex flex-col gap-4', [back, h('div', 'skeleton h-8 w-1/2'), h('div', 'skeleton h-40 w-full'), h('div', 'skeleton h-32 w-full')]));
+    api('/api/admin/users/' + encodeURIComponent(id)).then(function (data) {
+      var u = data.user;
+      var self = me && me.profile && me.profile.id === u.id;
+      var message = h('p', 'text-small text-muted');
+      message.setAttribute('role', 'status');
+      function notice(text, isError) {
+        message.className = 'text-small ' + (isError ? 'text-danger' : 'text-muted');
+        message.textContent = text;
+      }
+      function fail(err) {
+        if (err.status === 403 && err.message === 'admin_only') return navigate('/');
+        notice(ADMIN_ERRORS[err.message] || 'Could not save. Try again.', true);
+      }
+
+      // Coins: add or remove, with a reason that goes in the ledger.
+      var amountLabel = h('label', 'section-label block', 'Coins to add or remove');
+      var amount = h('input', 'field');
+      amount.id = 'admin-coin-amount';
+      amount.type = 'number';
+      amount.step = '1';
+      amount.inputMode = 'numeric';
+      amount.placeholder = 'e.g. 50 or -20';
+      amountLabel.htmlFor = amount.id;
+      var reasonLabel = h('label', 'section-label block', 'Reason');
+      var reason = h('input', 'field');
+      reason.id = 'admin-coin-reason';
+      reason.maxLength = 200;
+      reason.placeholder = 'e.g. Refund for a failed unlock';
+      reasonLabel.htmlFor = reason.id;
+      var adjust = h('button', 'btn-primary self-start', 'Adjust balance');
+      adjust.type = 'submit';
+      var form = h('form', 'flex flex-col gap-3', [h('div', '', [amountLabel, amount]), h('div', '', [reasonLabel, reason]), adjust]);
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var n = Number(amount.value);
+        if (!amount.value || !Number.isInteger(n) || n === 0) return notice(ADMIN_ERRORS.invalid_amount, true);
+        if (!reason.value.trim()) return notice(ADMIN_ERRORS.reason_required, true);
+        adjust.disabled = true;
+        api('/api/admin/users/' + u.id + '/coins', 'POST', { amount: n, reason: reason.value.trim() })
+          .then(function () { renderAdminUser(id); }, function (err) { adjust.disabled = false; fail(err); });
+      });
+
+      // Access: ban / unban, make or remove admin.
+      function accessButton(text, path, body, why) {
+        var b = h('button', 'btn-secondary', text);
+        b.type = 'button';
+        if (why) { b.disabled = true; b.title = why; }
+        b.addEventListener('click', function () {
+          b.disabled = true;
+          api('/api/admin/users/' + u.id + path, 'PUT', body)
+            .then(function () { renderAdminUser(id); }, function (err) { b.disabled = false; fail(err); });
+        });
+        return b;
+      }
+      var why = self ? ADMIN_ERRORS.cannot_change_self : null;
+      var roleBtn = u.role === 'admin'
+        ? accessButton('Remove admin', '/role', { role: 'user' }, why || (u.configuredAdmin ? ADMIN_ERRORS.configured_admin : null))
+        : accessButton('Make admin', '/role', { role: 'admin' }, why);
+      var banBtn = u.banned
+        ? accessButton('Unban', '/ban', { banned: false }, why)
+        : accessButton('Ban', '/ban', { banned: true }, why || (u.role === 'admin' ? ADMIN_ERRORS.cannot_ban_admin : null));
+      var accessNote = why || (u.configuredAdmin ? 'Admin through the ADMIN_USERNAMES setting.' : null);
+
+      var history = data.transactions.length
+        ? h('div', 'list', data.transactions.map(function (t) {
+          return h('div', 'list-row justify-between', [
+            h('span', 'flex flex-col', [
+              h('span', 'text-body', TX_LABEL[t.type] || t.type),
+              h('span', 'text-small text-muted', (t.note ? t.note + ' · ' : '') + new Date(t.createdAt).toLocaleString()),
+            ]),
+            h('span', 'text-body font-medium tabular-nums', (t.amount > 0 ? '+' : '') + formatNumber(t.amount)),
+          ]);
+        }))
+        : h('p', 'px-1 text-body text-muted', 'No coin activity yet.');
+
+      show(h('div', 'flex flex-col gap-6', [
+        h('div', 'flex flex-col gap-2', [
+          back,
+          h('div', 'flex flex-wrap items-center gap-3', [h('h1', 'text-title', u.username), roleBadges(u)]),
+          h('p', 'text-body text-muted', formatNumber(u.coinBalance) + ' coins · joined ' + new Date(u.createdAt).toLocaleDateString()),
+        ]),
+        message,
+        h('section', '', [h('h2', 'section-label', 'Adjust coins'), form]),
+        h('section', '', [
+          h('h2', 'section-label', 'Access'),
+          h('div', 'flex flex-wrap gap-3', [roleBtn, banBtn]),
+          accessNote ? h('p', 'mt-2 px-1 text-small text-muted', accessNote) : null,
+        ]),
+        h('section', '', [h('h2', 'section-label', 'Recent coin activity'), history]),
+      ]));
+    }).catch(function (err) {
+      if (err.status === 403) return navigate('/');
+      if (err.status === 404) {
+        return show(h('div', 'state-empty', [h('h1', 'text-heading', 'Person not found'), h('p', 'text-body text-muted', 'They may never have opened Dtv.'), back]));
+      }
+      show(errorState('Could not load this person', function () { renderAdminUser(id); }, back));
+    });
+  }
+
   // ── Series manager (admins only) ──────────────────────────────────────
-  // "/admin" lists every series with its published state; "/admin/series/new"
+  // "/admin/series" lists every series with its published state; "/admin/series/new"
   // and "/admin/series/<id>" are the series form; "/admin/series/<id>/episodes"
   // adds episodes in bulk. Who is an admin is the server's call (/api/me says
   // isAdmin; every /api/admin route checks again). The rules below repeat
@@ -1556,9 +1801,7 @@
   var LIMITS = { title: 120, description: 2000, genres: 5, totalEpisodes: 500, yearMin: 1900, yearMax: 2100, rows: 200, durationMax: 6 * 3600 };
   var LINK_CLS = 'inline-flex min-h-11 items-center self-start text-body font-medium text-accent';
 
-  function isAdmin() { return !!(me && me !== 'guest' && me.isAdmin); }
-
-  function adminBack() { return navLink('/admin', LINK_CLS, 'Manage series'); }
+  function adminBack() { return navLink('/admin/series', LINK_CLS, 'Manage series'); }
 
   function notAdminState() {
     var page = h('div', 'flex flex-col gap-4', [
@@ -1949,7 +2192,7 @@
             setFormMsg('Changes saved.');
             save.disabled = false;
           } else {
-            history.replaceState(null, '', '/admin' + location.search);
+            history.replaceState(null, '', '/admin/series' + location.search);
             navigate('/admin/series/' + r.series.id, { notice: 'Series added. Add its episodes, then publish it.' });
           }
         }).catch(function (err) {
@@ -2038,7 +2281,7 @@
         confirmBtn.disabled = true;
         err.textContent = '';
         api('/api/admin/series/' + s.id, 'DELETE').then(function () {
-          navigate('/admin');
+          navigate('/admin/series');
         }).catch(function () {
           confirmBtn.disabled = false;
           err.textContent = 'Could not delete it. Try again.';
@@ -2272,16 +2515,17 @@
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
     closeSheet();
-    if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
+    if (me === 'banned') { show(bannedState()); closeOnboarding(); return; }
+    if (isAdmin() && /^\/admin(?:\/|$)/.test(location.pathname)) {
+      if ((m = /^\/admin\/users\/(\d+)\/?$/.exec(location.pathname))) renderAdminUser(m[1]);
+      else if (/^\/admin\/users\/?$/.test(location.pathname)) renderAdminUsers();
+              else renderAdminDashboard();
+    } else if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
     else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
     else if (location.pathname === '/store') renderStore();
     else if (location.pathname === '/history') renderHistory();
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
     else if (/^\/my-list\/history\/?$/.test(location.pathname)) renderMyList('history');
-    else if (/^\/admin\/?$/.test(location.pathname)) renderAdminList();
-    else if (/^\/admin\/series\/new\/?$/.test(location.pathname)) renderSeriesForm(null);
-    else if ((m = /^\/admin\/series\/(\d+)\/?$/.exec(location.pathname))) renderSeriesForm(m[1]);
-    else if ((m = /^\/admin\/series\/(\d+)\/episodes\/?$/.exec(location.pathname))) renderEpisodesAdmin(m[1]);
     else renderBrowse();
     if (location.hash === '#/onboarding' || onboardingDue()) openOnboarding();
     else closeOnboarding();
@@ -2345,7 +2589,9 @@
   // (which may come from Homeroom) is settled at the same time.
   bootLoading();
   var who = api('/api/me').then(function (data) { me = data; }, function (err) {
-    me = err.status === 401 ? 'guest' : false;
+    if (err.status === 401) me = 'guest';
+    else if (err.status === 403 && err.message === 'banned') me = 'banned';
+    else me = false;
   });
   Promise.all([who, window.dtvI18n.ready]).then(function () {
     if (me === false) me = null;
