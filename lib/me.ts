@@ -220,7 +220,8 @@ export async function recordPlay(
 
 export async function listUnlocked(pool: Pool, userId: number): Promise<EpisodeItem[]> {
   const { rows } = await pool.query(
-    `SELECT e.id, e.series_id, e.number, e.title, e.duration_seconds, e.coin_price, e.video_url
+    `SELECT e.id, e.series_id, e.number, e.title, e.duration_seconds, e.coin_price, e.video_url,
+            e.subtitles_url
        FROM unlocked_episodes u
        JOIN episodes e ON e.id = u.episode_id
       WHERE u.user_id = $1
@@ -228,7 +229,7 @@ export async function listUnlocked(pool: Pool, userId: number): Promise<EpisodeI
   return rows.map((e) => ({
     id: e.id, seriesId: e.series_id, number: e.number, title: e.title,
     durationSeconds: e.duration_seconds, coinPrice: e.coin_price,
-    state: 'unlocked' as const, videoUrl: e.video_url,
+    state: 'unlocked' as const, videoUrl: e.video_url, subtitlesUrl: e.subtitles_url,
   }));
 }
 

@@ -145,6 +145,24 @@
       ]
     },
     {
+      "id": "player.watch",
+      "name": "Player opens a free episode",
+      "path": "/#/watch/bakery-on-maple-street/1",
+      "expectSelector": "[data-testid=player] [data-testid=player-slide][data-state=free] video",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "app/**",
+        "lib/**"
+      ]
+    },
+    {
+      "name": "Player shows the unlock card on a locked episode",
+      "path": "/#/watch/bakery-on-maple-street/4",
+      "expectSelector": "[data-testid=player-slide][data-state=locked] [data-testid=unlock-button]",
+      "expectText": "is locked"
+    },
+    {
       "name": "Transaction history renders",
       "path": "/history",
       "expectText": "Transaction history"

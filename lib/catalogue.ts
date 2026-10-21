@@ -5,7 +5,7 @@
 
 import type { Pool } from 'pg';
 import type {
-  BundleQuote, EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary,
+  BundleQuote, EpisodeItem, EpisodeWithProgress, Genre, SeriesDetail, SeriesSummary, WatchPayload,
 } from '../types';
 
 const SUMMARY_SQL = `
@@ -22,6 +22,7 @@ const SUMMARY_SQL = `
 
 const EPISODE_SQL = `
   SELECT e.id, e.series_id, e.number, e.title, e.duration_seconds, e.coin_price, e.video_url,
+         e.subtitles_url,
          EXISTS (SELECT 1 FROM unlocked_episodes u
                   WHERE u.episode_id = e.id AND u.user_id = $1) AS unlocked
     FROM episodes e
@@ -54,6 +55,7 @@ function toEpisode(e: any): EpisodeItem {
     state,
     // A locked episode's stream address stays server-side.
     videoUrl: state === 'locked' ? null : e.video_url,
+    subtitlesUrl: state === 'locked' ? null : e.subtitles_url,
   };
 }
 
@@ -92,6 +94,39 @@ export async function getEpisode(
 ): Promise<EpisodeItem | null> {
   const { rows } = await pool.query(`${EPISODE_SQL} WHERE e.id = $2`, [userId, id]);
   return rows.length ? toEpisode(rows[0]) : null;
+}
+
+/**
+ * The player's view of one episode: the episode, its series, every episode of
+ * the series in order, and the viewer's saved position (null for a guest).
+ * Null when there is no such episode.
+ */
+export async function getWatchPayload(
+  pool: Pool, episodeId: number, userId: number | null,
+): Promise<WatchPayload | null> {
+  const ep = await pool.query(`${EPISODE_SQL} WHERE e.id = $2`, [userId, episodeId]);
+  if (!ep.rows.length) return null;
+  const seriesId = ep.rows[0].series_id;
+  const s = await pool.query(`SELECT * FROM (${SUMMARY_SQL}) q WHERE id = $2`, [userId, seriesId]);
+  const eps = await pool.query(
+    `${EPISODE_SQL} WHERE e.series_id = $2 ORDER BY e.number`, [userId, seriesId]);
+  let resume: WatchPayload['resume'] = null;
+  if (userId !== null) {
+    const w = await pool.query(
+      'SELECT position_seconds, completed FROM watch_history WHERE user_id = $1 AND episode_id = $2',
+      [userId, episodeId]);
+    if (w.rows.length) resume = { positionSeconds: w.rows[0].position_seconds, completed: w.rows[0].completed };
+  }
+  const summary = toSummary(s.rows[0]);
+  return {
+    episode: toEpisode(ep.rows[0]),
+    series: {
+      slug: summary.slug, title: summary.title, genre: summary.genre,
+      coverUrl: summary.coverUrl, coverTone: summary.coverTone, following: summary.following,
+    },
+    playlist: eps.rows.map(toEpisode),
+    resume,
+  };
 }
 
 /**

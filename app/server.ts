@@ -229,6 +229,15 @@ app.use('/api', catalogueRouter(pool, { isStaging: IS_STAGING, cacheMs: 30_000 }
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
+// The player's HLS engine, from the hls.js package (a pinned dependency, not
+// platform infrastructure). The light build: no in-manifest subtitles or DRM,
+// which the player does not use. Public like the rest of the static files.
+const HLS_FILE = path.join(path.dirname(require.resolve('hls.js/package.json')), 'dist', 'hls.light.min.js');
+app.get('/vendor/hls.light.min.js', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(HLS_FILE);
+});
+
 // Install icon for the web manifest and the home-screen bookmark.
 app.get('/icons/icon-512.png', (_req, res) => {
   res.set('Cache-Control', 'public, max-age=86400');

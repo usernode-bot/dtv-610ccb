@@ -1,5 +1,7 @@
 // Dtv front end: a series browse screen, a series detail screen, the watch
-// screen, My List, the Coins page, the transaction history, the genre onboarding
+// screen, the full-screen player (public/js/player.js, hash route
+// "#/watch/<episodeId>" or "#/watch/<slug>/<number>"; a "/watch/<episodeId>"
+// path is moved to it), My List, the Coins page, the transaction history, the genre onboarding
 // and, for admins, the series manager. Path routes: "/" (browse),
 // "/series/<slug>" (detail), "/watch/<episodeId>" (watch), "/my-list"
 // (followed series), "/my-list/history" (watch history), "/store" (Coins),
@@ -48,8 +50,11 @@
     } catch (_) {}
   }
 
-  /** @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status */
-  function api(path, method, body) {
+  /**
+   * @param {{keepalive?: boolean}} [extra] fetch options (keepalive lets a save finish as the page closes)
+   * @returns {Promise<any>} parsed JSON; rejects with an Error carrying .status
+   */
+  function api(path, method, body, extra) {
     var headers = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers['x-usernode-token'] = token;
@@ -58,6 +63,7 @@
     }
     var init = { method: method || 'GET', headers: headers };
     if (body !== undefined) init.body = JSON.stringify(body);
+    if (extra && extra.keepalive) init.keepalive = true;
     return fetch(path, init).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) {
@@ -459,7 +465,7 @@
       ]),
       h('span', 'shrink-0 text-small text-muted', progress),
     ]);
-    a.dataset.seriesSlug = item.seriesSlug;
+    a.href = '#/watch/' + item.episodeId;
     return h('li', '', [a]);
   }
 
@@ -894,7 +900,7 @@
         if (e.state === 'locked') {
           openUnlockSheet({ episode: e, series: s, notice: notice, onUnlocked: function () { renderDetail(slug); } });
         } else {
-          navigate('/watch/' + e.id, { seriesSlug: slug });
+          location.hash = '#/watch/' + e.id;
         }
       }
 
@@ -1512,6 +1518,7 @@
           me.onboarding.required = false;
           closeOnboarding();
           if (location.hash === '#/onboarding') location.hash = '#/';
+          else if (/^#\/watch\//.test(location.hash)) route();
         }).catch(function (err) {
           if (err.status !== 401) message.textContent = t('saveGenresFailed');
           paintSave();
@@ -2251,6 +2258,21 @@
   }
 
   // ── Routing ───────────────────────────────────────────────────────────
+  // What the player borrows from this file, so nothing is written twice.
+  var playerContext = {
+    api: api, h: h, cover: cover, lockIcon: lockIcon, minutes: minutes, plural: plural,
+    isGuest: isGuest, askForAccount: askForAccount,
+    canSave: function () { return !!me && me !== 'guest'; },
+  };
+
+  /** The player's route as { id } or { slug, number }, or null for any other route. */
+  function watchRef() {
+    var m = /^#\/watch\/(\d+)$/.exec(location.hash);
+    if (m) return { id: Number(m[1]) };
+    m = /^#\/watch\/([^/]+)\/(\d+)$/.exec(location.hash);
+    return m ? { slug: decodeURIComponent(m[1]), number: Number(m[2]) } : null;
+  }
+
   // The query string (the platform's ?token=, ?un-theme=, ...) is kept on
   // every in-app navigation so a reload still works.
   function navigate(path, state) {
@@ -2267,13 +2289,28 @@
   });
 
   function route() {
+    var legacyWatch = /^\/watch\/(\d+)\/?$/.exec(location.pathname);
+    if (legacyWatch) history.replaceState(null, '', '/' + location.search + '#/watch/' + legacyWatch[1]);
+    var ref = watchRef();
+    if (ref) {
+      // The player covers the page; onboarding, when due, comes first.
+      if (onboardingDue()) openOnboarding();
+      else {
+        // Opening a playable episode puts it in the person's watch history.
+        if (ref.id && me && !isGuest()) {
+          api('/api/me/watch-history/' + ref.id + '/play', 'POST').catch(function () {});
+        }
+        window.DtvPlayer.open(ref, playerContext);
+      }
+      return;
+    }
+    window.DtvPlayer.close();
     endWatching();
     var legacy = /^#\/series\/([^/]+)$/.exec(location.hash);
     if (legacy) history.replaceState(null, '', '/series/' + legacy[1] + location.search);
     var m;
     closeSheet();
     if ((m = /^\/series\/([^/]+)\/?$/.exec(location.pathname))) renderDetail(decodeURIComponent(m[1]));
-    else if ((m = /^\/watch\/(\d+)\/?$/.exec(location.pathname))) renderWatch(m[1]);
     else if (location.pathname === '/store') renderStore();
     else if (location.pathname === '/history') renderHistory();
     else if (/^\/my-list\/?$/.test(location.pathname)) renderMyList('following');
